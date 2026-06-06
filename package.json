@@ -1,0 +1,127 @@
+{
+  "name": "mulesoft-flow-visualizer",
+  "displayName": "MuleSoft Multi-Flow Visualizer",
+  "description": "Renders a unified, stacked visual canvas of all flows, sub-flows, and error handlers in a Mule XML file — just like Anypoint Studio.",
+  "version": "1.0.0",
+  "publisher": "your-publisher-id",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "icon": "images/icon.png",
+  "keywords": [
+    "mulesoft",
+    "mule",
+    "anypoint",
+    "flow",
+    "xml",
+    "visualizer",
+    "integration"
+  ],
+  "activationEvents": [
+    "onLanguage:xml",
+    "workspaceContains:**/*.xml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mulesoft-flow-visualizer.openVisualizer",
+        "title": "Open MuleSoft Multi-Flow Visualizer",
+        "category": "MuleSoft",
+        "icon": {
+          "light": "images/icon-light.svg",
+          "dark": "images/icon-dark.svg"
+        }
+      },
+      {
+        "command": "mulesoft-flow-visualizer.refreshVisualizer",
+        "title": "Refresh MuleSoft Visualizer",
+        "category": "MuleSoft",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mulesoft-flow-visualizer.openVisualizer",
+          "when": "resourceExtname == .xml",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mulesoft-flow-visualizer.refreshVisualizer",
+          "when": "resourceExtname == .xml && mulesoft-flow-visualizer.panelOpen",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mulesoft-flow-visualizer.openVisualizer",
+          "when": "resourceExtname == .xml"
+        },
+        {
+          "command": "mulesoft-flow-visualizer.refreshVisualizer",
+          "when": "mulesoft-flow-visualizer.panelOpen"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "mulesoft-flow-visualizer.openVisualizer",
+          "when": "resourceExtname == .xml",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MuleSoft Flow Visualizer",
+      "properties": {
+        "mulesoftFlowVisualizer.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh the visualizer when the Mule XML file changes."
+        },
+        "mulesoftFlowVisualizer.refreshDebounceMs": {
+          "type": "number",
+          "default": 800,
+          "description": "Debounce delay in milliseconds before auto-refreshing after an edit."
+        },
+        "mulesoftFlowVisualizer.theme": {
+          "type": "string",
+          "enum": ["default", "dark", "forest", "neutral"],
+          "default": "default",
+          "description": "Mermaid diagram theme to use."
+        },
+        "mulesoftFlowVisualizer.showErrorHandlers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include error handlers in the visualization."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.4"
+  }
+}
