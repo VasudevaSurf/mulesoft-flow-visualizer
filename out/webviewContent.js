@@ -192,6 +192,22 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden;
 .prop-val.default-val{color:#888;font-style:italic}
 .row-missing{background:rgba(200,50,50,.08)!important}
 .row-missing .prop-key{color:#f48771}
+/* select dropdowns */
+.prop-select{
+  background:var(--vscode-dropdown-background,#252526);
+  color:var(--vscode-foreground,#ccc);
+  border:1px solid var(--vscode-dropdown-border,#3c3c3c);
+  border-radius:2px;
+  padding:2px 4px;
+  font-family:monospace;
+  font-size:10px;
+  outline:none;
+  width:100%;
+  max-width:300px;
+}
+.prop-select:focus{
+  border-color:var(--vscode-focusBorder,#007acc);
+}
 /* TOOLTIP */
 #tip{position:fixed;background:var(--vscode-editorHoverWidget-background,#252526);
   border:1px solid var(--vscode-editorHoverWidget-border,#454545);
@@ -306,356 +322,6 @@ const C = {
   subroutine:'#c586c0', rect:'#569cd6',
 };
 
-// ── Connector Schema Registry ─────────────────────────────────────────────────
-// Groups for each connector: { groupLabel: [attrKey, ...] }
-// Keys match the XML attribute names (without namespace prefix for most).
-// Unknown attrs are auto-collected into "Other" group.
-const SCHEMA = {
-  // ── HTTP ──
-  'http:listener': {
-    'General':         ['doc:name','doc:id','config-ref','path','allowedMethods'],
-    'Response':        ['http:response.statusCode','http:response > http:headers','http:response > http:body','outputMimeType','encoding'],
-    'Error Response':  ['http:error-response.statusCode','http:error-response > http:body','http:error-response > http:headers'],
-    'Advanced':        ['primaryNodeOnly','responseStreamingMode'],
-  },
-  'http:request': {
-    'General':         ['doc:name','doc:id','config-ref','method','path','url'],
-    'Request':         ['http:body','http:headers','http:query-params','http:uri-params'],
-    'Response':        ['outputMimeType','encoding'],
-    'Advanced':        ['followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
-  },
-  'https:listener': {
-    'General':         ['doc:name','config-ref','path','allowedMethods'],
-    'Response':        ['http:response.statusCode','http:response > http:headers'],
-    'Advanced':        ['primaryNodeOnly','responseStreamingMode'],
-  },
-  'https:request': {
-    'General':         ['doc:name','config-ref','method','path'],
-    'Advanced':        ['followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
-  },
-
-  // ── Core ──
-  'flow-ref': {
-    'General':       ['doc:name','name'],
-  },
-  'logger': {
-    'General':       ['doc:name','level','message','category'],
-  },
-  'set-payload': {
-    'General':       ['doc:name','value','encoding','mimeType'],
-  },
-  'set-variable': {
-    'General':       ['doc:name','variableName','value','encoding','mimeType'],
-  },
-  'set-property': {
-    'General':       ['doc:name','propertyName','value','encoding','mimeType'],
-  },
-  'remove-variable': {
-    'General':       ['doc:name','variableName'],
-  },
-  'remove-property': {
-    'General':       ['doc:name','propertyName'],
-  },
-  'raise-error': {
-    'General':       ['doc:name','type','description'],
-  },
-  'choice': {
-    'General':       ['doc:name'],
-  },
-  'foreach': {
-    'General':       ['doc:name','collection','itemVariableName','batchSize','rootMessageVariableName','counterVariableName'],
-  },
-  'scatter-gather': {
-    'General':       ['doc:name','timeout'],
-    'Advanced':      ['target','targetValue','errorHandlingStrategy'],
-  },
-  'until-successful': {
-    'General':       ['doc:name','maxRetries','millisBetweenRetries'],
-  },
-  'try': {
-    'General':       ['doc:name'],
-  },
-  'async': {
-    'General':       ['doc:name'],
-    'Advanced':      ['maxConcurrency'],
-  },
-  'scheduler': {
-    'General':       ['doc:name'],
-  },
-
-  // ── DataWeave / Transform ──
-  'ee:transform': {
-    'General':       ['doc:name','doc:id'],
-    'Payload':       ['ee:message > ee:set-payload'],
-    'Variables':     ['ee:variables > ee:set-variable'],
-    'Advanced':      ['mode'],
-  },
-  'dw:transform-message': {
-    'General':       ['doc:name'],
-  },
-
-  // ── APIkit ──
-  'apikit:router': {
-    'General':       ['doc:name','config-ref'],
-  },
-  'apikit:console': {
-    'General':       ['doc:name','config-ref'],
-  },
-
-  // ── Database ──
-  'db:select': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['sql','queryTimeout','queryTimeoutUnit','fetchSize','maxRows'],
-    'Advanced':      ['target','targetValue','outputMimeType'],
-  },
-  'db:insert': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'db:update': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'db:delete': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'db:stored-procedure': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'db:bulk-insert': {
-    'General':       ['doc:name','config-ref'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'db:bulk-update': {
-    'General':       ['doc:name','config-ref'],
-    'Advanced':      ['target','targetValue'],
-  },
-
-  // ── JMS ──
-  'jms:publish': {
-    'General':       ['doc:name','config-ref','destination','destinationType'],
-    'Message':       ['body','jmsType','correlationId','sendContentType','contentType','sendEncoding','encoding','timeToLive','timeToLiveUnit','persistent','priority','deliveryDelay','deliveryDelayUnit'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'jms:consume': {
-    'General':       ['doc:name','config-ref','destination','destinationType'],
-    'Message':       ['ackMode','selector','contentType','encoding','maximumWait','maximumWaitUnit'],
-    'Advanced':      ['target','targetValue','outputMimeType'],
-  },
-  'jms:publish-consume': {
-    'General':       ['doc:name','config-ref','destination','destinationType'],
-    'Advanced':      ['maximumWait','maximumWaitUnit','target','targetValue'],
-  },
-
-  // ── AMQP ──
-  'amqp:publish': {
-    'General':       ['doc:name','config-ref','exchangeName'],
-    'Advanced':      ['routingKey','target','targetValue'],
-  },
-  'amqp:consume': {
-    'General':       ['doc:name','config-ref','queueName'],
-    'Advanced':      ['ackMode','maximumWait','maximumWaitUnit','target','targetValue'],
-  },
-
-  // ── VM ──
-  'vm:publish': {
-    'General':       ['doc:name','config-ref','queueName'],
-    'Advanced':      ['sendTimeout','target','targetValue'],
-  },
-  'vm:consume': {
-    'General':       ['doc:name','config-ref','queueName'],
-    'Advanced':      ['maximumWait','maximumWaitUnit','target','targetValue','outputMimeType'],
-  },
-
-  // ── File ──
-  'file:read': {
-    'General':       ['doc:name','config-ref','path'],
-    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
-  },
-  'file:write': {
-    'General':       ['doc:name','config-ref','path','content'],
-    'Advanced':      ['encoding','mode','createParentDirectories'],
-  },
-  'file:list': {
-    'General':       ['doc:name','config-ref','directoryPath','recursive'],
-    'Advanced':      ['outputMimeType','target','targetValue'],
-  },
-  'file:move': {
-    'General':       ['doc:name','config-ref','sourcePath','targetPath'],
-    'Advanced':      ['createParentDirectories','overwrite'],
-  },
-  'file:delete': {
-    'General':       ['doc:name','config-ref','path'],
-  },
-
-  // ── FTP / SFTP ──
-  'ftp:read': {
-    'General':       ['doc:name','config-ref','path'],
-    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
-  },
-  'ftp:write': {
-    'General':       ['doc:name','config-ref','path','content'],
-    'Advanced':      ['createParentDirectories','mode'],
-  },
-  'sftp:read': {
-    'General':       ['doc:name','config-ref','path'],
-    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
-  },
-  'sftp:write': {
-    'General':       ['doc:name','config-ref','path','content'],
-    'Advanced':      ['createParentDirectories','mode'],
-  },
-
-  // ── Salesforce ──
-  'salesforce:query': {
-    'General':       ['doc:name','config-ref'],
-    'Query':         ['query','streamingOptions'],
-    'Advanced':      ['outputMimeType','target','targetValue'],
-  },
-  'salesforce:create': {
-    'General':       ['doc:name','config-ref','type'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'salesforce:update': {
-    'General':       ['doc:name','config-ref','type'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'salesforce:upsert': {
-    'General':       ['doc:name','config-ref','type','externalIdFieldName'],
-    'Advanced':      ['target','targetValue'],
-  },
-  'salesforce:delete': {
-    'General':       ['doc:name','config-ref'],
-    'Advanced':      ['target','targetValue'],
-  },
-
-  // ── APIkit ──
-  'apikit:router': {
-    'General':       ['doc:name','config-ref'],
-  },
-
-  // ── Validation ──
-  'validation:is-true': {
-    'General':       ['doc:name','expression','message'],
-  },
-  'validation:is-not-null': {
-    'General':       ['doc:name','value','message'],
-  },
-  'validation:is-null': {
-    'General':       ['doc:name','value','message'],
-  },
-  'validation:is-number': {
-    'General':       ['doc:name','value','minValue','maxValue','message'],
-  },
-  'validation:matches-regex': {
-    'General':       ['doc:name','value','regex','message'],
-  },
-
-  // ── Error handling ──
-  'on-error-propagate': {
-    'General':       ['doc:name','type','when','logException','enableNotifications'],
-  },
-  'on-error-continue': {
-    'General':       ['doc:name','type','when','logException','enableNotifications'],
-  },
-
-  // ── Crypto / Security ──
-  'crypto:encrypt': {
-    'General':       ['doc:name','config-ref','content','output','outputMimeType','outputEncoding'],
-  },
-  'crypto:decrypt': {
-    'General':       ['doc:name','config-ref','content','output','outputMimeType','outputEncoding'],
-  },
-  'oauth2:validate-token': {
-    'General':       ['doc:name','config-ref'],
-  },
-
-  // ── Cache ──
-  'ee:cache': {
-    'General':       ['doc:name','config-ref'],
-    'Advanced':      ['filter','filterExpression','cacheStatisticsEnabled'],
-  },
-
-  // ── Object Store ──
-  'os:store': {
-    'General':       ['doc:name','config-ref','key','value'],
-    'Advanced':      ['ttl','ttlUnit','persistent','overwrite','failIfPresent'],
-  },
-  'os:retrieve': {
-    'General':       ['doc:name','config-ref','key'],
-    'Advanced':      ['defaultValue','target','targetValue','outputMimeType'],
-  },
-  'os:remove': {
-    'General':       ['doc:name','config-ref','key','failIfAbsent'],
-  },
-  'os:contains': {
-    'General':       ['doc:name','config-ref','key','target'],
-  },
-
-  // ── Mule Batch ──
-  'batch:job': {
-    'General':       ['doc:name'],
-    'Advanced':      ['maxFailedRecords','jobInstanceId'],
-  },
-  'batch:step': {
-    'General':       ['doc:name','acceptExpression','acceptPolicy'],
-    'Advanced':      ['maxConcurrency','minBatchSize'],
-  },
-
-  // ── SAP ──
-  'sap:invoke-sync': {
-    'General':       ['doc:name','config-ref','functionName'],
-    'Advanced':      ['transactionalAction','target','targetValue'],
-  },
-  'sap:invoke-async': {
-    'General':       ['doc:name','config-ref','functionName'],
-  },
-
-  // ── Kafka ──
-  'kafka:publish': {
-    'General':       ['doc:name','config-ref','topic'],
-    'Message':       ['key','value','headers'],
-  },
-  'kafka:consume': {
-    'General':       ['doc:name','config-ref'],
-  },
-
-  // ── MQ (Anypoint MQ) ──
-  'anypoint-mq:publish': {
-    'General':       ['doc:name','config-ref','destination'],
-    'Message':       ['body','priority','messageId','sendContentType','contentType'],
-  },
-  'anypoint-mq:consume': {
-    'General':       ['doc:name','config-ref','destination'],
-    'Advanced':      ['ackMode','pollingTime','maxLocalMessages','target','targetValue'],
-  },
-  'anypoint-mq:ack': {
-    'General':       ['doc:name','config-ref'],
-  },
-  'anypoint-mq:nack': {
-    'General':       ['doc:name','config-ref'],
-  },
-
-  // ── Email ──
-  'email:send': {
-    'General':       ['doc:name','config-ref'],
-    'Message':       ['toAddresses','fromAddress','subject','content','contentType'],
-    'Advanced':      ['ccAddresses','bccAddresses','replyToAddresses'],
-  },
-  'email:list-imap': {
-    'General':       ['doc:name','config-ref'],
-  },
-  'email:list-pop3': {
-    'General':       ['doc:name','config-ref'],
-  },
-};
-
 // ── Pretty-print attribute key ─────────────────────────────────────────────────
 function friendlyKey(k){
   // Strip namespace prefixes (e.g. 'http:response' → 'response', 'ee:set-payload' → 'set-payload')
@@ -670,40 +336,18 @@ function friendlyKey(k){
     .trim();
 }
 
-// ── Build grouped property sections from rawAttrs + schema ───────────────────
+// ── Build grouped property sections from rawAttrs ────────────────────────────
 function buildPropGroups(tagName, rawAttrs){
-  const schema = SCHEMA[tagName] || {};
-  const claimed = new Set();
   const groups = [];
-
-  // schema-defined groups — show ALL defined keys, even if empty
-  for(const [grpLabel, keys] of Object.entries(schema)){
-    const rows = [];
-    for(const k of keys){
-      claimed.add(k);
-      const v = rawAttrs[k] || '';
-      rows.push({k, v});
-    }
-    if(rows.length) groups.push({label:grpLabel, rows});
-  }
-
-  // "Other" group: any attrs not in schema (includes nested child properties)
-  const otherRows = [];
-  for(const [k,v] of Object.entries(rawAttrs)){
-    if(!claimed.has(k) && k !== 'name' && v !== undefined && v !== '') {
-      otherRows.push({k,v});
+  const rows = [];
+  for (const [k, v] of Object.entries(rawAttrs)) {
+    if (k !== 'name' && v !== undefined && v !== '') {
+      rows.push({ k, v });
     }
   }
-  if(otherRows.length) groups.push({label:'Other', rows:otherRows});
-
-  // If nothing was schema-matched at all, show ALL attrs in General
-  if(groups.length === 0 && Object.keys(rawAttrs).length > 0){
-    const rows = Object.entries(rawAttrs)
-      .filter(([,v])=> v !== '')
-      .map(([k,v])=>({k,v}));
-    if(rows.length) groups.push({label:'General', rows});
+  if (rows.length) {
+    groups.push({ label: 'General', rows });
   }
-
   return groups;
 }
 
@@ -760,19 +404,16 @@ function selectNode(nodeEl, step, flowLineNumber){
   }
 }
 
-// ── Schema loading badge ──────────────────────────────────────────────────────
 function setSchemaLoading(on){
   let badge = document.getElementById('schema-badge');
   if(on){
     if(!badge){
       badge = document.createElement('span');
       badge.id = 'schema-badge';
-      badge.style.cssText = 'font-size:9px;padding:1px 6px;background:#005f87;color:#9cdcfe;'
-        +'border-radius:8px;margin-left:6px;vertical-align:middle';
+      badge.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground,#888);margin-left:6px;vertical-align:middle';
       propsTag.insertAdjacentElement('afterend', badge);
     }
-    badge.textContent = '\u27f3 loading schema\u2026';
-    badge.style.background='#005f87'; badge.style.color='#9cdcfe';
+    badge.textContent = '· loading schema';
     badge.style.display = '';
   } else {
     if(badge) badge.style.display = 'none';
@@ -858,9 +499,46 @@ function makeSchemaRow(k,v,param){
 }
 
 function makeValueEl(v,param){
+  if(param && param.allowedValues && param.allowedValues.length > 0) {
+    const select = document.createElement('select');
+    select.className = 'prop-select';
+    
+    if(!param.required && !v){
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '(not set)';
+      emptyOpt.selected = true;
+      select.appendChild(emptyOpt);
+    }
+    
+    const valTrim = (v || '').trim();
+    let matched = false;
+    
+    for(const optVal of param.allowedValues){
+      const opt = document.createElement('option');
+      opt.value = optVal;
+      opt.textContent = optVal;
+      if(optVal === valTrim || (!valTrim && optVal === param.defaultValue)){
+        opt.selected = true;
+        matched = true;
+      }
+      select.appendChild(opt);
+    }
+    
+    if(valTrim && !matched){
+      const opt = document.createElement('option');
+      opt.value = valTrim;
+      opt.textContent = valTrim;
+      opt.selected = true;
+      select.insertBefore(opt, select.firstChild);
+    }
+    
+    return select;
+  }
+
   const el=document.createElement('div'); el.className='prop-val';
   if(!v||!v.trim()){
-    el.textContent=param&&param.defaultValue?param.defaultValue:'(empty)';
+    el.textContent=param&&param.defaultValue?param.defaultValue:'(not set)';
     el.classList.add(param&&param.defaultValue?'default-val':'empty');
   } else if(v.startsWith('#[')||v.includes('vars.')||v.includes('payload')||v.includes('attributes')){
     el.textContent=v; el.classList.add('expr'); el.title='DataWeave expression';
@@ -1234,34 +912,11 @@ window.addEventListener('message',e=>{
   } else if(msg.command==='update'){
     render();
   } else if(msg.command==='connectorSchema'){
-    // Extension resolved the JAR schema — upgrade the properties panel
     setSchemaLoading(false);
-    if(propsPanel.classList.contains('open')){
-      if(msg.error){
-        // Show error badge but keep rawAttrs panel
-        const badge = document.getElementById('schema-badge');
-        if(badge){
-          badge.textContent = '⚠ schema unavailable';
-          badge.style.background = '#4a1a1a';
-          badge.style.color = '#f48771';
-          badge.style.display = '';
-        }
-        return;
-      }
-      if(msg.matched){
-        // Full schema available — re-render with type info + required flags
-        renderSchemaGroups(msg.tagName, msg.rawAttrs, msg.matched);
-        // Update schema badge to show connector version
-        const badge = document.getElementById('schema-badge');
-        if(badge){
-          badge.textContent = '✓ schema loaded';
-          badge.style.background = '#1a3a1a';
-          badge.style.color = '#4ec9b0';
-          badge.style.display = '';
-          setTimeout(()=>{ if(badge) badge.style.display='none'; }, 3000);
-        }
-      }
-      // If no match but no error: keep rawAttrs panel as-is
+    if(propsPanel.classList.contains('open') && msg.matched){
+      const oldScroll = propsBody.scrollTop;
+      renderSchemaGroups(msg.tagName, msg.rawAttrs, msg.matched);
+      propsBody.scrollTop = oldScroll;
     }
   }
 });

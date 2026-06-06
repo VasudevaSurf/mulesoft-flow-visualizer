@@ -4,11 +4,8 @@
  * Pipeline:
  *  1. Parse the workspace pom.xml → extract mule-plugin dependencies
  *  2. Match XML namespace prefixes to pom dependencies
- *  3. Download the connector's -mule-plugin.jar from Maven Central (cached)
- *  4. Unzip the JAR with JSZip and extract:
- *       a) META-INF/*.xsd  (primary – most complete parameter info)
- *       b) META-INF/mule-artifact/annotations.json  (fallback)
- *  5. Expose OperationDef[] for each connector so the webview can render
+ *  3. Fetch connector descriptor schema dynamically from Anypoint Exchange API
+ *  4. Expose OperationDef[] for each connector so the webview can render
  *     a real properties panel.
  */
 import * as vscode from "vscode";
@@ -48,15 +45,9 @@ export declare function parsePomDependencies(pomText: string): PomParseResult;
  * Heuristic: namespace URI last-segment or prefix word appears in artifactId.
  */
 export declare function matchDepToPrefix(prefix: string, namespaceUri: string, deps: ConnectorDep[]): ConnectorDep | undefined;
-/** Return local JAR path (downloading + caching if needed).
- *  Tries Maven Central first, then pom.xml repos, then well-known MuleSoft repos. */
-export declare function getOrDownloadJar(dep: ConnectorDep, storageUri: vscode.Uri, pomRepoUrls?: string[]): Promise<string | null>;
-/** Extract OperationDef[] from a cached JAR file for the given namespace prefix. */
-export declare function extractOperations(jarPath: string, prefix: string): Promise<OperationDef[]>;
-/**
- * Full pipeline: given a namespace prefix and all context, return OperationDef[].
- * Downloads and caches the JAR the first time.
- */
+/** Fetch connector descriptor schema dynamically from Anypoint Exchange API */
+export declare function fetchSchemaFromExchange(dep: ConnectorDep): Promise<OperationDef[]>;
+/** Orchestrate getting connector operations (signature remains identical for extension.ts compatibility) */
 export declare function getConnectorOperations(prefix: string, namespaces: Map<string, string>, pomDeps: ConnectorDep[], storageUri: vscode.Uri, pomRepoUrls?: string[]): Promise<OperationDef[]>;
 /** Find the matching OperationDef for a clicked XML tag (e.g. "http:request"). */
 export declare function findOperation(ops: OperationDef[], tagName: string): OperationDef | undefined;

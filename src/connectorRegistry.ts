@@ -4,11 +4,8 @@
  * Pipeline:
  *  1. Parse the workspace pom.xml → extract mule-plugin dependencies
  *  2. Match XML namespace prefixes to pom dependencies
- *  3. Download the connector's -mule-plugin.jar from Maven Central (cached)
- *  4. Unzip the JAR with JSZip and extract:
- *       a) META-INF/*.xsd  (primary – most complete parameter info)
- *       b) META-INF/mule-artifact/annotations.json  (fallback)
- *  5. Expose OperationDef[] for each connector so the webview can render
+ *  3. Fetch connector descriptor schema dynamically from Anypoint Exchange API
+ *  4. Expose OperationDef[] for each connector so the webview can render
  *     a real properties panel.
  */
 
@@ -18,7 +15,6 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import * as https from "https";
 import * as http from "http";
-import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -52,11 +48,9 @@ export interface PomParseResult {
 
 // ─── Module-level caches ──────────────────────────────────────────────────────
 
-/** prefix → OperationDef[] (populated after JAR extraction) */
-const opsByPrefix = new Map<string, OperationDef[]>();
+/** Exchange API result cache: groupId:artifactId:version -> Promise<OperationDef[]> or OperationDef[] */
+const exchangeCache = new Map<string, Promise<OperationDef[]> | OperationDef[]>();
 
-/** dep key → in-progress or resolved download path */
-const dlPromises = new Map<string, Promise<string | null>>();
 
 // ─── Namespace extraction ─────────────────────────────────────────────────────
 
@@ -161,408 +155,178 @@ export function matchDepToPrefix(
   return undefined;
 }
 
-// ─── Maven repository download ────────────────────────────────────────────────
+// ─── Anypoint Exchange API integration ───────────────────────────────────────
 
-/** Build the JAR URL for a given Maven repo base URL. */
-function mavenJarUrl(repoBase: string, dep: ConnectorDep): string {
-  const g = dep.groupId.replace(/\./g, "/");
-  const base = repoBase.endsWith("/") ? repoBase : repoBase + "/";
-  return `${base}${g}/${dep.artifactId}/${dep.version}/${dep.artifactId}-${dep.version}-mule-plugin.jar`;
-}
-
-/** Well-known MuleSoft Maven repositories (tried as fallbacks). */
-const MULESOFT_REPOS = [
-  "https://repository.mulesoft.org/releases/",
-  "https://repository.mulesoft.org/nexus/content/repositories/public/",
-  "https://maven.anypoint.mulesoft.com/api/v3/maven/",
-];
-
-/** Download url → dest file, following redirects. Returns false on HTTP error. */
-function downloadToFile(url: string, dest: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const attempt = (u: string, hops = 0) => {
-      if (hops > 6) { resolve(false); return; }
-      const mod = u.startsWith("https") ? https : http;
-      (mod as typeof https).get(u, (res) => {
-        if ([301, 302, 307, 308].includes(res.statusCode ?? 0)) {
-          res.resume();
-          attempt(res.headers.location ?? u, hops + 1);
-          return;
-        }
-        if ((res.statusCode ?? 0) !== 200) {
-          res.resume();
-          resolve(false);
-          return;
-        }
-        const ws = fs.createWriteStream(dest);
-        res.pipe(ws);
-        ws.on("finish", () => resolve(true));
-        ws.on("error", () => resolve(false));
-      }).on("error", () => resolve(false));
-    };
-    attempt(url);
-  });
-}
-
-/** Return local JAR path (downloading + caching if needed).
- *  Tries Maven Central first, then pom.xml repos, then well-known MuleSoft repos. */
-export async function getOrDownloadJar(
-  dep: ConnectorDep,
-  storageUri: vscode.Uri,
-  pomRepoUrls: string[] = []
-): Promise<string | null> {
-  const key = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
-  if (dlPromises.has(key)) return dlPromises.get(key)!;
-
-  const doDownload = async (): Promise<string | null> => {
-    const dir = storageUri.fsPath;
-    await fsp.mkdir(dir, { recursive: true });
-
-    const jarName = `${dep.artifactId}-${dep.version}-mule-plugin.jar`;
-    const jarPath = path.join(dir, jarName);
-
-    if (fs.existsSync(jarPath)) return jarPath; // already cached
-
-    // Build ordered list of repo URLs to try:
-    // 1. Maven Central  2. pom.xml repos  3. Well-known MuleSoft repos
-    const allRepos = [
-      "https://repo1.maven.org/maven2/",
-      ...pomRepoUrls,
-      ...MULESOFT_REPOS,
-    ];
-    // Deduplicate
-    const seen = new Set<string>();
-    const uniqueRepos = allRepos.filter((r) => {
-      const norm = r.replace(/\/+$/, "");
-      if (seen.has(norm)) return false;
-      seen.add(norm);
-      return true;
+/** Helper to perform GET request, follow redirects, and handle timeouts. */
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+  redirectCount = 0
+): Promise<{ status: number; body: string }> {
+  if (redirectCount > 5) {
+    return Promise.reject(new Error("Too many redirects"));
+  }
+  return new Promise((resolve, reject) => {
+    const isHttps = url.startsWith("https");
+    const client = isHttps ? https : http;
+    const req = client.get(url, { headers, timeout: 8000 }, (res) => {
+      const status = res.statusCode || 0;
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, url).toString();
+        httpGet(nextUrl, headers, redirectCount + 1).then(resolve, reject);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          status,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
     });
 
-    for (const repoUrl of uniqueRepos) {
-      const url = mavenJarUrl(repoUrl, dep);
-      const repoName = repoUrl.includes("mulesoft") || repoUrl.includes("anypoint")
-        ? "MuleSoft repo" : repoUrl.includes("maven.org") ? "Maven Central" : repoUrl;
-      const bar = vscode.window.setStatusBarMessage(
-        `⬇ Downloading ${dep.artifactId} ${dep.version} from ${repoName}…`
-      );
-      console.log(`[MuleViz] Trying: ${url}`);
-      const ok = await downloadToFile(url, jarPath);
-      bar.dispose();
+    req.on("error", (err) => {
+      reject(err);
+    });
 
-      if (ok) {
-        vscode.window.setStatusBarMessage(`✓ ${dep.artifactId} cached from ${repoName}`, 4000);
-        return jarPath;
-      }
-      // Clean up partial file before trying next repo
-      if (fs.existsSync(jarPath)) {
-        try { fs.unlinkSync(jarPath); } catch { /* ignore */ }
-      }
-    }
-
-    // All repos failed
-    vscode.window.showWarningMessage(
-      `[MuleViz] Could not download ${dep.artifactId} ${dep.version} from any repository. ` +
-      `Tried ${uniqueRepos.length} repos.`
-    );
-    return null;
-  };
-
-  const p = doDownload();
-  dlPromises.set(key, p);
-  return p;
-}
-
-// ─── JAR extraction & parsing ─────────────────────────────────────────────────
-
-/** Extract OperationDef[] from a cached JAR file for the given namespace prefix. */
-export async function extractOperations(
-  jarPath: string,
-  prefix: string
-): Promise<OperationDef[]> {
-  const cacheKey = `${jarPath}§${prefix}`;
-  if (opsByPrefix.has(cacheKey)) return opsByPrefix.get(cacheKey)!;
-
-  let data: Buffer;
-  try {
-    data = await fsp.readFile(jarPath);
-  } catch {
-    return [];
-  }
-
-  const zip = await JSZip.loadAsync(data);
-  let ops: OperationDef[] = [];
-
-  // ── Strategy A: XSD (most complete, contains allowed values + types) ──────
-  ops = await extractFromXsd(zip, prefix);
-
-  // ── Strategy B: annotations.json / extension-model.json ──────────────────
-  if (ops.length === 0) {
-    ops = await extractFromAnnotations(zip);
-  }
-
-  opsByPrefix.set(cacheKey, ops);
-  return ops;
-}
-
-// ── Strategy A: XSD ──────────────────────────────────────────────────────────
-
-async function extractFromXsd(zip: JSZip, prefix: string): Promise<OperationDef[]> {
-  // Collect XSD candidates — prefer files whose name contains the prefix
-  const candidates: string[] = [];
-  zip.forEach((rel) => {
-    if (!rel.endsWith(".xsd")) return;
-    if (rel.toLowerCase().includes(prefix.toLowerCase())) {
-      candidates.unshift(rel); // priority
-    } else if (rel.startsWith("META-INF/")) {
-      candidates.push(rel);
-    }
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Timeout"));
+    });
   });
-
-  for (const rel of [...new Set(candidates)]) {
-    const file = zip.file(rel);
-    if (!file) continue;
-    const content = await file.async("string");
-    const ops = parseXsd(content);
-    if (ops.length > 0) return ops;
-  }
-  return [];
 }
 
-const XSD_PARSER = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  isArray: (n) =>
-    [
-      "xs:element","xs:attribute","xs:complexType","xs:enumeration",
-      "xs:extension","xs:restriction","xs:sequence","xs:choice",
-      "element","attribute","complexType","enumeration",
-    ].includes(n),
-});
+/** Parse connector-descriptor JSON structure into OperationDef[] */
+function parseDescriptor(descriptor: any): OperationDef[] {
+  if (!descriptor) return [];
 
-function parseXsd(xsd: string): OperationDef[] {
-  let doc: Record<string, unknown>;
-  try {
-    doc = XSD_PARSER.parse(xsd) as Record<string, unknown>;
-  } catch {
+  let rawOps: any[] | undefined;
+  let description: string | undefined;
+
+  if (descriptor.extension) {
+    rawOps = descriptor.extension.operations;
+    description = descriptor.extension.description;
+  }
+  if (!Array.isArray(rawOps)) {
+    rawOps = descriptor.operations;
+  }
+  if (!Array.isArray(rawOps)) {
     return [];
   }
 
-  // Support xs:schema / xsd:schema / schema
-  const schema = (
-    (doc["xs:schema"] || doc["xsd:schema"] || doc["schema"]) as Record<string, unknown>
-  ) ?? {};
-
-  // Index all named complexTypes
-  const namedTypes = new Map<string, ParameterDef[]>();
-  const rawCts = (schema["xs:complexType"] || schema["complexType"] || []) as unknown[];
-  for (const ct of rawCts) {
-    if (!ct || typeof ct !== "object") continue;
-    const c = ct as Record<string, unknown>;
-    const name = c["@_name"] as string | undefined;
-    if (name) namedTypes.set(name, gatherAttrs(c));
-  }
-
-  // Build operations from top-level xs:element declarations
   const ops: OperationDef[] = [];
-  const rawEls = (schema["xs:element"] || schema["element"] || []) as unknown[];
-
-  for (const el of rawEls) {
-    if (!el || typeof el !== "object") continue;
-    const e = el as Record<string, unknown>;
-    const opName = (e["@_name"] as string | undefined)?.trim();
-    if (!opName) continue;
-
-    // Skip config/connection elements — not operations
-    const lop = opName.toLowerCase();
-    if (lop.includes("config") || lop.includes("connection") || lop.includes("pool")) continue;
-
-    // Resolve params from inline complexType or $type reference
-    let params: ParameterDef[] = [];
-    const inlineCt = e["xs:complexType"] || e["complexType"];
-    if (inlineCt) {
-      const ct = Array.isArray(inlineCt) ? inlineCt[0] : inlineCt;
-      params = gatherAttrs(ct as Record<string, unknown>);
-    }
-    const typeRef = e["@_type"] as string | undefined;
-    if (!params.length && typeRef) {
-      const local = typeRef.includes(":") ? typeRef.split(":")[1] : typeRef;
-      params = namedTypes.get(local) ?? namedTypes.get(typeRef) ?? [];
-    }
-
-    // Skip empty elements (likely abstract base types)
-    ops.push({ name: opName, parameters: params });
-  }
-
-  return ops;
-}
-
-/** Recursively collect xs:attribute from a complexType node */
-function gatherAttrs(ct: Record<string, unknown>): ParameterDef[] {
-  if (!ct) return [];
-  const params: ParameterDef[] = [];
-
-  // Direct attributes
-  const rawAttrs = (ct["xs:attribute"] || ct["attribute"] || []) as unknown[];
-  for (const a of rawAttrs) {
-    const param = parseXsdAttr(a as Record<string, unknown>);
-    if (param) params.push(param);
-  }
-
-  // Attributes inside xs:complexContent / xs:extension (inheritance)
-  for (const key of ["xs:complexContent", "xs:simpleContent", "complexContent", "simpleContent"]) {
-    const cc = ct[key] as Record<string, unknown> | undefined;
-    if (!cc) continue;
-    for (const extKey of ["xs:extension", "xs:restriction", "extension", "restriction"]) {
-      const ext = cc[extKey] as Record<string, unknown> | undefined | unknown[];
-      if (!ext) continue;
-      const node = Array.isArray(ext) ? ext[0] : ext;
-      if (node && typeof node === "object") {
-        params.push(...gatherAttrs(node as Record<string, unknown>));
-      }
-    }
-  }
-
-  return params;
-}
-
-function parseXsdAttr(a: Record<string, unknown>): ParameterDef | null {
-  const name = (a["@_name"] as string | undefined)?.trim();
-  if (!name) return null;
-
-  const rawType = (a["@_type"] as string | undefined) ?? "xs:string";
-  const type = xsdTypeToFriendly(rawType);
-  const use = (a["@_use"] as string | undefined) ?? "optional";
-  const defaultValue = a["@_default"] as string | undefined;
-
-  // Collect allowed values from inline xs:simpleType > xs:restriction > xs:enumeration
-  const allowedValues: string[] = [];
-  const st = a["xs:simpleType"] || a["simpleType"];
-  if (st) {
-    const stNode = Array.isArray(st) ? (st as unknown[])[0] : st;
-    if (stNode && typeof stNode === "object") {
-      const rest =
-        (stNode as Record<string, unknown>)["xs:restriction"] ||
-        (stNode as Record<string, unknown>)["restriction"];
-      if (rest && typeof rest === "object") {
-        const restNode = Array.isArray(rest) ? (rest as unknown[])[0] : rest;
-        const enums =
-          (restNode as Record<string, unknown>)["xs:enumeration"] ||
-          (restNode as Record<string, unknown>)["enumeration"] || [];
-        for (const en of enums as unknown[]) {
-          const val = (en as Record<string, unknown>)?.["@_value"] as string | undefined;
-          if (val) allowedValues.push(val);
+  for (const op of rawOps) {
+    if (!op || typeof op !== "object" || !op.name) continue;
+    const parameters: ParameterDef[] = [];
+    if (Array.isArray(op.parameterGroupModels)) {
+      for (const group of op.parameterGroupModels) {
+        if (group && Array.isArray(group.parameters)) {
+          for (const param of group.parameters) {
+            if (param && param.name) {
+              parameters.push({
+                name: param.name,
+                type: param.type || "String",
+                required: !!param.required,
+                defaultValue: param.defaultValue !== undefined ? String(param.defaultValue) : undefined,
+                description: param.description,
+                allowedValues: Array.isArray(param.allowedValues) ? param.allowedValues.map(String) : undefined,
+              });
+            }
+          }
         }
       }
     }
-  }
-
-  return {
-    name,
-    type,
-    required: use === "required",
-    defaultValue,
-    allowedValues: allowedValues.length ? allowedValues : undefined,
-  };
-}
-
-function xsdTypeToFriendly(t: string): string {
-  const local = t.includes(":") ? t.split(":")[1] : t;
-  const map: Record<string, string> = {
-    string: "String", token: "String", normalizedString: "String",
-    integer: "Integer", int: "Integer", long: "Long", short: "Short",
-    decimal: "Decimal", double: "Double", float: "Float",
-    boolean: "Boolean",
-    dateTime: "DateTime", date: "Date", time: "Time", duration: "Duration",
-    anyURI: "URI", base64Binary: "Base64", hexBinary: "HexBinary",
-    nonNegativeInteger: "Integer", positiveInteger: "Integer",
-    NMTOKEN: "String",
-  };
-  return map[local] ?? local;
-}
-
-// ── Strategy B: annotations.json / extension-model.json ──────────────────────
-
-async function extractFromAnnotations(zip: JSZip): Promise<OperationDef[]> {
-  const paths = [
-    "META-INF/mule-artifact/annotations.json",
-    "META-INF/mule-artifact/extension-model.json",
-    "META-INF/annotations.json",
-  ];
-  for (const p of paths) {
-    const f = zip.file(p);
-    if (!f) continue;
-    const text = await f.async("string");
-    try {
-      const json = JSON.parse(text);
-      const ops = parseAnnotationsJson(json);
-      if (ops.length) return ops;
-    } catch {
-      /* ignore malformed JSON */
-    }
-  }
-  return [];
-}
-
-function parseAnnotationsJson(json: unknown): OperationDef[] {
-  if (!json || typeof json !== "object") return [];
-  const j = json as Record<string, unknown>;
-
-  // Handle { extensions: [...] } or root array
-  const extList =
-    (j["extensions"] as unknown[]) ??
-    (j["extension"] as unknown[]) ??
-    (Array.isArray(json) ? (json as unknown[]) : null) ??
-    [];
-
-  const ops: OperationDef[] = [];
-
-  for (const ext of extList) {
-    if (!ext || typeof ext !== "object") continue;
-    const e = ext as Record<string, unknown>;
-    const rawOps = (e["operations"] ?? e["operation"] ?? []) as unknown[];
-    for (const o of rawOps) {
-      if (!o || typeof o !== "object") continue;
-      const op = o as Record<string, unknown>;
-      const name = String(op["name"] ?? "").trim();
-      if (!name) continue;
-
-      const rawParams = (op["parameters"] ?? op["parameter"] ?? []) as unknown[];
-      const params: ParameterDef[] = [];
-
-      for (const p of rawParams) {
-        if (!p || typeof p !== "object") continue;
-        const pm = p as Record<string, unknown>;
-        const pName = String(pm["name"] ?? "").trim();
-        if (!pName) continue;
-        const typeVal = pm["type"] as Record<string, unknown> | string | undefined;
-        const type =
-          typeof typeVal === "string" ? typeVal
-          : typeof typeVal === "object" && typeVal
-          ? String((typeVal as Record<string, unknown>)["name"] ?? "String")
-          : "String";
-
-        params.push({
-          name: pName,
-          type,
-          required: Boolean(pm["required"]),
-          defaultValue: pm["defaultValue"] as string | undefined,
-          description: pm["description"] as string | undefined,
-          expressionSupport: pm["expressionSupport"] as string | undefined,
-        });
-      }
-      ops.push({ name, description: op["description"] as string | undefined, parameters: params });
-    }
+    ops.push({
+      name: op.name,
+      description: op.description || description,
+      parameters,
+    });
   }
   return ops;
 }
 
-// ─── High-level orchestration ─────────────────────────────────────────────────
+/** Fetch connector descriptor schema dynamically from Anypoint Exchange API */
+export function fetchSchemaFromExchange(dep: ConnectorDep): Promise<OperationDef[]> {
+  const key = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
+  const existing = exchangeCache.get(key);
+  if (existing) {
+    return Promise.resolve(existing);
+  }
 
-/**
- * Full pipeline: given a namespace prefix and all context, return OperationDef[].
- * Downloads and caches the JAR the first time.
- */
+  const promise = (async () => {
+    try {
+      const assetUrl = `https://anypoint.mulesoft.com/exchange/api/v2/assets/${dep.groupId}/${dep.artifactId}/${dep.version}`;
+      console.log(`[MuleViz] Fetching connector asset from: ${assetUrl}`);
+      const assetRes = await httpGet(assetUrl, { Accept: "application/json" });
+
+      if (assetRes.status === 404 || assetRes.status === 401) {
+        console.log(`[MuleViz] Exchange API returned status ${assetRes.status} for ${key}`);
+        return [];
+      }
+
+      if (assetRes.status !== 200) {
+        console.warn(`[MuleViz] Exchange API unexpected status ${assetRes.status} for ${key}`);
+        return [];
+      }
+
+      let assetData: any;
+      try {
+        assetData = JSON.parse(assetRes.body);
+      } catch (e) {
+        console.warn(`[MuleViz] Failed to parse Exchange asset JSON:`, e);
+        return [];
+      }
+
+      let descriptorData: any = null;
+      let foundDescriptor = false;
+
+      if (assetData && Array.isArray(assetData.files)) {
+        const fileEntry = assetData.files.find(
+          (f: any) => f && (f.classifier === "connector-descriptor" || f.packaging === "json")
+        );
+        if (fileEntry && fileEntry.externalLink) {
+          try {
+            console.log(`[MuleViz] Fetching descriptor from: ${fileEntry.externalLink}`);
+            const descRes = await httpGet(fileEntry.externalLink);
+            if (descRes.status === 200) {
+              descriptorData = JSON.parse(descRes.body);
+              foundDescriptor = true;
+            }
+          } catch (e) {
+            console.warn(`[MuleViz] Failed to fetch externalLink descriptor:`, e);
+          }
+        }
+      }
+
+      let ops: OperationDef[] = [];
+      if (foundDescriptor && descriptorData) {
+        ops = parseDescriptor(descriptorData);
+      }
+      if (ops.length === 0) {
+        ops = parseDescriptor(assetData);
+      }
+
+      console.log(`[MuleViz] Successfully parsed ${ops.length} operations for ${key}`);
+      return ops;
+    } catch (err) {
+      console.error(`[MuleViz] fetchSchemaFromExchange error for ${key}:`, err);
+      return [];
+    }
+  })();
+
+  exchangeCache.set(key, promise);
+
+  promise.then(
+    (res) => exchangeCache.set(key, res),
+    () => exchangeCache.delete(key)
+  );
+
+  return promise;
+}
+
+/** Orchestrate getting connector operations (signature remains identical for extension.ts compatibility) */
 export async function getConnectorOperations(
   prefix: string,
   namespaces: Map<string, string>,
@@ -570,17 +334,13 @@ export async function getConnectorOperations(
   storageUri: vscode.Uri,
   pomRepoUrls: string[] = []
 ): Promise<OperationDef[]> {
-  if (opsByPrefix.has(prefix)) return opsByPrefix.get(prefix)!;
-
   const nsUri = namespaces.get(prefix) ?? "";
   const dep = matchDepToPrefix(prefix, nsUri, pomDeps);
   if (!dep) return [];
 
-  const jarPath = await getOrDownloadJar(dep, storageUri, pomRepoUrls);
-  if (!jarPath) return [];
-
-  return extractOperations(jarPath, prefix);
+  return fetchSchemaFromExchange(dep);
 }
+
 
 /** Find the matching OperationDef for a clicked XML tag (e.g. "http:request"). */
 export function findOperation(
