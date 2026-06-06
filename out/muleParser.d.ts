@@ -29,6 +29,17 @@ export interface FlowStep {
     /** 1-based line number of the tag inside the XML document */
     lineNumber?: number;
 }
+export interface ChildFieldDef {
+    key: string;
+    label: string;
+    type: "cdata" | "text" | "attrs";
+    subfields?: {
+        name: string;
+        type: "string" | "enum";
+        options?: string[];
+    }[];
+    default?: string;
+}
 /** One complete flow/sub-flow/error-handler block */
 export interface ParsedFlow {
     /** "flow" | "sub-flow" | "error-handler" */
@@ -56,6 +67,26 @@ export interface ParseResult {
     /** Non-fatal warnings to surface in the UI */
     warnings: string[];
 }
+interface TagMeta {
+    label: string;
+    shape: FlowStep["shape"];
+    icon?: string;
+    color?: string;
+    defaultAttrs?: Record<string, string>;
+    requiredAttrs?: string[];
+}
+/**
+ * Maps well-known Mule XML tag names (namespace:localName) to a friendly
+ * display label and a Mermaid node shape.
+ *
+ * "stadium"    → rounded pill  ([text])
+ * "rect"       → rectangle     [text]
+ * "diamond"    → decision      {text}
+ * "subroutine" → subprocess    [[text]]
+ * "cylinder"   → DB / store    [(text)]
+ */
+export declare const TAG_META: Record<string, TagMeta>;
+export declare const CHILD_SCHEMA: Record<string, ChildFieldDef[]>;
 /**
  * Parse a Mule XML string into a ParseResult.
  *
@@ -69,4 +100,5 @@ export declare function parseMuleXml(xmlText: string): ParseResult;
  * @param theme   - Mermaid theme name
  */
 export declare function generateMermaidDiagram(flows: ParsedFlow[], theme?: string): string;
+export {};
 //# sourceMappingURL=muleParser.d.ts.map

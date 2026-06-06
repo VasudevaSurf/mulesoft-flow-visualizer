@@ -10,7 +10,7 @@
  */
 
 import * as vscode from "vscode";
-import { ParsedFlow } from "./muleParser";
+import { ParsedFlow, CHILD_SCHEMA } from "./muleParser";
 
 export interface WebviewContentOptions {
   mermaidSrc: string;
@@ -106,7 +106,7 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden;
 #toolbar{display:flex;align-items:center;gap:6px;padding:5px 10px;
   background:var(--vscode-tab-activeBackground,#252526);
   border-bottom:1px solid var(--vscode-panel-border,#3c3c3c);flex-shrink:0}
-#toolbar h1{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+#toolbar h1{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:6px;
   color:var(--vscode-titleBar-activeForeground,#ccc)}
 .tbtn{background:var(--vscode-button-secondaryBackground,#3c3c3c);
   color:var(--vscode-button-secondaryForeground,#ccc);
@@ -348,6 +348,9 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden;
 <body>
 <div id="toolbar">
   <h1>🔀 MuleSoft Multi-Flow Visualizer</h1>
+  <button class="tbtn" id="b-add-flow" title="Add new Flow" style="background:#007acc;color:#fff;">＋ Flow</button>
+  <button class="tbtn" id="b-add-subflow" title="Add new Sub-Flow" style="background:#68217a;color:#fff;">＋ Sub-Flow</button>
+  <span style="flex:1"></span>
   <button class="tbtn" id="b-out" title="Zoom out (Ctrl -)">－</button>
   <span id="zlabel">100%</span>
   <button class="tbtn" id="b-in" title="Zoom in (Ctrl +)">＋</button>
@@ -444,6 +447,7 @@ try {
   FLOWS = [];
 }
 var vscode = acquireVsCodeApi();
+var CHILD_SCHEMA = ${JSON.stringify(CHILD_SCHEMA)};
 
 // Force palette body to be scrollable by setting its height explicitly in JS
 function fixSidebarHeights() {
@@ -525,6 +529,21 @@ const C = {
 
 // ── Pretty-print attribute key ─────────────────────────────────────────────────
 function friendlyKey(k){
+  if (k.includes('>')) {
+    // Strip "ee:" prefix if present
+    let cleaned = k.replace(/^ee:/g, '').replace(/>ee:/g, '>');
+    return cleaned.split('>')
+      .map(segment => {
+        let s = segment.trim().replace(/[a-z]+:/g, '');
+        s = s.replace(/([a-z])([A-Z])/g, '$1 $2')
+             .replace(/[-]/g, ' ')
+             .replace(/\b\w/g, c => c.toUpperCase())
+             .trim();
+        return s;
+      })
+      .join(' · ');
+  }
+
   // Strip namespace prefixes (e.g. 'http:response' → 'response', 'ee:set-payload' → 'set-payload')
   var cleaned = k.replace(/[a-z]+:/g, '');
   // Convert separators: ' > ' → ' ', '.' → ' '
@@ -542,7 +561,7 @@ function buildPropGroups(tagName, rawAttrs){
   const groups = [];
   const rows = [];
   for (const [k, v] of Object.entries(rawAttrs)) {
-    if (k !== 'name' && v !== undefined && v !== '') {
+    if (k !== 'name' && v !== undefined && v !== '' && !k.startsWith('ee:') && !k.includes('>')) {
       rows.push({ k, v });
     }
   }
@@ -593,16 +612,13 @@ function selectNode(nodeEl, step, flowLineNumber){
   showProperties(step, flowLineNumber);
 
   // 2. Ask extension to resolve the full connector schema from the JAR
-  const prefix = step.tagName.includes(':') ? step.tagName.split(':')[0] : '';
-  if(prefix && prefix !== 'doc'){
-    setSchemaLoading(true);
-    vscode.postMessage({
-      command: 'getConnectorSchema',
-      tagName: step.tagName,
-      rawAttrs: step.rawAttrs || {},
-      lineNumber: flowLineNumber,
-    });
-  }
+  setSchemaLoading(true);
+  vscode.postMessage({
+    command: 'getConnectorSchema',
+    tagName: step.tagName,
+    rawAttrs: step.rawAttrs || {},
+    lineNumber: flowLineNumber,
+  });
 }
 
 function setSchemaLoading(on){
@@ -629,23 +645,360 @@ function showProperties(step, lineNumber){
   propsTitle.textContent = docName || friendlyKey(step.tagName);
   propsTag.textContent   = step.tagName;
   propsGoto.style.display = lineNumber > 0 ? '' : 'none';
-  renderRawAttrGroups(step.tagName, step.rawAttrs);
+  if (step.tagName === 'logger') {
+    renderLoggerProperties(step.tagName, step.rawAttrs);
+  } else {
+    renderNodeProperties(step.tagName, step.rawAttrs, null);
+  }
 }
 
-function renderRawAttrGroups(tagName, rawAttrs){
-  const groups = buildPropGroups(tagName, rawAttrs);
+function renderNodeProperties(tagName, rawAttrs, matchedOp) {
   propsBody.innerHTML = '';
-  if(!groups.length){
-    propsBody.innerHTML = '<div style="padding:16px 12px;color:#666;font-size:11px;text-align:center">No attributes — loading schema…</div>';
-    return;
+
+  // 1. Render normal attributes
+  if (matchedOp) {
+    renderSchemaGroups(tagName, rawAttrs, matchedOp);
+  } else {
+    renderRawAttrGroups(tagName, rawAttrs, rawAttrs);
   }
-  for(const grp of groups) appendPropGroup(propsBody, grp.label, grp.rows, tagName);
+
+  // 2. Render child elements from CHILD_SCHEMA
+  const fields = CHILD_SCHEMA[tagName];
+  if (fields && fields.length > 0) {
+    const g = document.createElement('div');
+    g.className = 'prop-group';
+    const hdr = document.createElement('div');
+    hdr.className = 'prop-group-hdr';
+    hdr.textContent = 'Child Elements';
+    const body = document.createElement('div');
+    body.className = 'prop-rows';
+    hdr.addEventListener('click', () => {
+      hdr.classList.toggle('collapsed');
+      body.style.display = hdr.classList.contains('collapsed') ? 'none' : '';
+    });
+    g.appendChild(hdr);
+
+    for (const field of fields) {
+      const val = (field.key in rawAttrs) ? rawAttrs[field.key] : (field.default || '');
+
+      if (field.type === 'cdata' || field.type === 'text') {
+        const row = document.createElement('div');
+        row.className = 'prop-row';
+        row.style.display = 'block';
+        row.style.padding = '8px 12px';
+
+        const label = document.createElement('div');
+        label.className = 'prop-key';
+        label.style.fontWeight = 'bold';
+        label.style.marginBottom = '4px';
+        label.style.fontSize = '10px';
+        label.textContent = field.label;
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'prop-input';
+        textarea.rows = field.key.includes("set-payload") ? 8 : 6;
+        textarea.style.fontFamily = 'monospace';
+        textarea.style.width = '100%';
+        textarea.style.maxWidth = '100%';
+        textarea.style.boxSizing = 'border-box';
+        textarea.style.fontSize = '10px';
+        textarea.value = val;
+
+        const commitChange = () => {
+          const newValue = textarea.value;
+          if (newValue === val) return;
+          vscode.postMessage({
+            command: 'updateAttribute',
+            tagName: tagName,
+            lineNumber: propLineNo,
+            attributeName: field.key,
+            newValue: newValue,
+            docId: rawAttrs['doc:id'],
+            docName: rawAttrs['doc:name']
+          });
+        };
+
+        textarea.addEventListener('change', commitChange);
+        textarea.addEventListener('blur', commitChange);
+
+        row.appendChild(label);
+        row.appendChild(textarea);
+        body.appendChild(row);
+      } else if (field.type === 'attrs' && field.subfields) {
+        for (const sub of field.subfields) {
+          const subKey = field.key + '.' + sub.name;
+          const subVal = (subKey in rawAttrs) ? rawAttrs[subKey] : '';
+
+          const row = document.createElement('div');
+          row.className = 'prop-row';
+
+          const label = document.createElement('div');
+          label.className = 'prop-key';
+          label.textContent = field.label + ' - ' + friendlyKey(sub.name);
+          row.appendChild(label);
+
+          let valEl;
+          if (sub.type === 'enum' && sub.options) {
+            valEl = document.createElement('select');
+            valEl.className = 'prop-select';
+            for (const optVal of sub.options) {
+              const opt = document.createElement('option');
+              opt.value = optVal;
+              opt.textContent = optVal;
+              if (optVal === subVal) opt.selected = true;
+              valEl.appendChild(opt);
+            }
+          } else {
+            valEl = document.createElement('input');
+            valEl.type = 'text';
+            valEl.className = 'prop-input';
+            valEl.value = subVal;
+          }
+
+          const commitSub = () => {
+            const newValue = valEl.value;
+            if (newValue === subVal) return;
+            vscode.postMessage({
+              command: 'updateAttribute',
+              tagName: tagName,
+              lineNumber: propLineNo,
+              attributeName: subKey,
+              newValue: newValue,
+              docId: rawAttrs['doc:id'],
+              docName: rawAttrs['doc:name']
+            });
+          };
+
+          valEl.addEventListener('change', commitSub);
+          valEl.addEventListener('blur', commitSub);
+          if (sub.type !== 'enum') {
+            valEl.addEventListener('keydown', e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                valEl.blur();
+              }
+            });
+          }
+
+          row.appendChild(valEl);
+          body.appendChild(row);
+        }
+      }
+    }
+    g.appendChild(body);
+    propsBody.appendChild(g);
+  }
+
+  // 3. Render unknown child elements containing ">"
+  const knownKeys = new Set(fields ? fields.map(f => f.key) : []);
+  const unknownKeys = Object.keys(rawAttrs).filter(k => k.includes('>') && !knownKeys.has(k) && !k.includes('.'));
+
+  if (unknownKeys.length > 0) {
+    const g = document.createElement('div');
+    g.className = 'prop-group';
+    const hdr = document.createElement('div');
+    hdr.className = 'prop-group-hdr';
+    hdr.textContent = 'Unknown Child Elements';
+    const body = document.createElement('div');
+    body.className = 'prop-rows';
+    hdr.addEventListener('click', () => {
+      hdr.classList.toggle('collapsed');
+      body.style.display = hdr.classList.contains('collapsed') ? 'none' : '';
+    });
+    g.appendChild(hdr);
+
+    for (const k of unknownKeys) {
+      const v = rawAttrs[k];
+      const row = document.createElement('div');
+      row.className = 'prop-row';
+      row.style.display = 'block';
+      row.style.padding = '8px 12px';
+
+      const label = document.createElement('div');
+      label.className = 'prop-key';
+      label.style.fontWeight = 'bold';
+      label.style.marginBottom = '4px';
+      label.style.fontSize = '10px';
+      label.textContent = friendlyKey(k);
+      label.title = k;
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'prop-input';
+      textarea.rows = 6;
+      textarea.style.fontFamily = 'monospace';
+      textarea.style.width = '100%';
+      textarea.style.maxWidth = '100%';
+      textarea.style.boxSizing = 'border-box';
+      textarea.style.fontSize = '10px';
+      textarea.value = v || '';
+
+      const commitChange = () => {
+        const newValue = textarea.value;
+        if (newValue === v) return;
+        vscode.postMessage({
+          command: 'updateAttribute',
+          tagName: tagName,
+          lineNumber: propLineNo,
+          attributeName: k,
+          newValue: newValue,
+          docId: rawAttrs['doc:id'],
+          docName: rawAttrs['doc:name']
+        });
+      };
+
+      textarea.addEventListener('change', commitChange);
+      textarea.addEventListener('blur', commitChange);
+
+      row.appendChild(label);
+      row.appendChild(textarea);
+      body.appendChild(row);
+    }
+    g.appendChild(body);
+    propsBody.appendChild(g);
+  }
+}
+
+function renderLoggerProperties(tagName, rawAttrs) {
+  propsBody.innerHTML = '';
+
+  const g = document.createElement('div');
+  g.className = 'prop-group';
+  const hdr = document.createElement('div');
+  hdr.className = 'prop-group-hdr';
+  hdr.textContent = 'Logger';
+  const body = document.createElement('div');
+  body.className = 'prop-rows';
+  g.appendChild(hdr);
+  g.appendChild(body);
+
+  // doc:name
+  const nameVal = rawAttrs['doc:name'] || '';
+  const nameRow = document.createElement('div');
+  nameRow.className = 'prop-row';
+  const nameLabel = document.createElement('div');
+  nameLabel.className = 'prop-key';
+  nameLabel.textContent = 'Name (doc:name)';
+  nameRow.appendChild(nameLabel);
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'prop-input';
+  nameInput.value = nameVal;
+  nameInput.placeholder = 'Logger';
+  const commitName = () => {
+    const newVal = nameInput.value;
+    if (newVal === nameVal) return;
+    vscode.postMessage({
+      command: 'updateAttribute',
+      tagName,
+      lineNumber: propLineNo,
+      attributeName: 'doc:name',
+      newValue: newVal,
+      docId: rawAttrs['doc:id'],
+      docName: rawAttrs['doc:name']
+    });
+  };
+  nameInput.addEventListener('change', commitName);
+  nameInput.addEventListener('blur', commitName);
+  nameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      nameInput.blur();
+    }
+  });
+  nameRow.appendChild(nameInput);
+  body.appendChild(nameRow);
+
+  // level dropdown: ERROR, WARN, INFO, DEBUG, TRACE
+  const levelVal = rawAttrs['level'] || 'INFO';
+  const levelRow = document.createElement('div');
+  levelRow.className = 'prop-row';
+  const levelLabel = document.createElement('div');
+  levelLabel.className = 'prop-key';
+  levelLabel.textContent = 'Level';
+  levelRow.appendChild(levelLabel);
+  const levelSelect = document.createElement('select');
+  levelSelect.className = 'prop-select';
+  const levels = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'];
+  for (const lvl of levels) {
+    const opt = document.createElement('option');
+    opt.value = lvl;
+    opt.textContent = lvl;
+    if (lvl === levelVal) opt.selected = true;
+    levelSelect.appendChild(opt);
+  }
+  levelSelect.addEventListener('change', () => {
+    vscode.postMessage({
+      command: 'updateAttribute',
+      tagName,
+      lineNumber: propLineNo,
+      attributeName: 'level',
+      newValue: levelSelect.value,
+      docId: rawAttrs['doc:id'],
+      docName: rawAttrs['doc:name']
+    });
+  });
+  levelRow.appendChild(levelSelect);
+  body.appendChild(levelRow);
+
+  // message (always textarea)
+  const msgVal = rawAttrs['message'] || '';
+  const msgRow = document.createElement('div');
+  msgRow.className = 'prop-row';
+  msgRow.style.display = 'block';
+  msgRow.style.padding = '8px 12px';
+  const msgLabel = document.createElement('div');
+  msgLabel.className = 'prop-key';
+  msgLabel.style.fontWeight = 'bold';
+  msgLabel.style.marginBottom = '4px';
+  msgLabel.style.fontSize = '10px';
+  msgLabel.textContent = 'Message';
+  const msgTextarea = document.createElement('textarea');
+  msgTextarea.className = 'prop-input';
+  msgTextarea.rows = 4;
+  msgTextarea.style.fontFamily = 'monospace';
+  msgTextarea.style.width = '100%';
+  msgTextarea.style.maxWidth = '100%';
+  msgTextarea.style.boxSizing = 'border-box';
+  msgTextarea.style.fontSize = '10px';
+  msgTextarea.value = msgVal;
+  msgTextarea.placeholder = 'e.g. #[payload]';
+  const commitMsg = () => {
+    const newVal = msgTextarea.value;
+    if (newVal === msgVal) return;
+    vscode.postMessage({
+      command: 'updateAttribute',
+      tagName,
+      lineNumber: propLineNo,
+      attributeName: 'message',
+      newValue: newVal,
+      docId: rawAttrs['doc:id'],
+      docName: rawAttrs['doc:name']
+    });
+  };
+  msgTextarea.addEventListener('change', commitMsg);
+  msgTextarea.addEventListener('blur', commitMsg);
+  msgRow.appendChild(msgLabel);
+  msgRow.appendChild(msgTextarea);
+  body.appendChild(msgRow);
+
+  propsBody.appendChild(g);
+}
+
+function renderRawAttrGroups(tagName, rawAttrs, rawAttrsObj){
+  const groups = buildPropGroups(tagName, rawAttrs);
+  if(groups.length){
+    for(const grp of groups) appendPropGroup(propsBody, grp.label, grp.rows, tagName, rawAttrsObj);
+  } else {
+    const schema = CHILD_SCHEMA[tagName] || [];
+    if (schema.length === 0) {
+      propsBody.innerHTML = '<div style="padding:16px 12px;color:#666;font-size:11px;text-align:center">No attributes — loading schema…</div>';
+    }
+  }
 }
 
 function renderSchemaGroups(tagName, rawAttrs, matchedOp){
-  propsBody.innerHTML = '';
   if(!matchedOp || !matchedOp.parameters || !matchedOp.parameters.length){
-    renderRawAttrGroups(tagName, rawAttrs); return;
+    renderRawAttrGroups(tagName, rawAttrs, rawAttrs); return;
   }
   const generalRows=[], advRows=[];
   for(const param of matchedOp.parameters){
@@ -654,40 +1007,40 @@ function renderSchemaGroups(tagName, rawAttrs, matchedOp){
     if(param.required || ['doc:name','config-ref','name'].includes(param.name)) generalRows.push(row);
     else advRows.push(row);
   }
-  if(generalRows.length) appendSchemaGroup(propsBody, 'General', generalRows, tagName);
-  if(advRows.length)     appendSchemaGroup(propsBody, 'Advanced', advRows, tagName);
+  if(generalRows.length) appendSchemaGroup(propsBody, 'General', generalRows, tagName, rawAttrs);
+  if(advRows.length)     appendSchemaGroup(propsBody, 'Advanced', advRows, tagName, rawAttrs);
   const knownKeys = new Set(matchedOp.parameters.map(p=>p.name));
-  const extraRows = Object.entries(rawAttrs).filter(([k,v])=>!knownKeys.has(k)&&v!=='').map(([k,v])=>({k,v}));
-  if(extraRows.length) appendPropGroup(propsBody, 'XML Extras', extraRows, tagName);
+  const extraRows = Object.entries(rawAttrs).filter(([k,v])=>!knownKeys.has(k)&&v!==''&&!k.startsWith('ee:')&&!k.includes('>')).map(([k,v])=>({k,v}));
+  if(extraRows.length) appendPropGroup(propsBody, 'XML Extras', extraRows, tagName, rawAttrs);
 }
 
-function appendPropGroup(container, label, rows, tagName){
+function appendPropGroup(container, label, rows, tagName, rawAttrs){
   const g=document.createElement('div'); g.className='prop-group';
   const hdr=document.createElement('div'); hdr.className='prop-group-hdr'; hdr.textContent=label;
   const body=document.createElement('div'); body.className='prop-rows';
   hdr.addEventListener('click',()=>{ hdr.classList.toggle('collapsed'); body.style.display=hdr.classList.contains('collapsed')?'none':''; });
   g.appendChild(hdr);
-  for(const {k,v} of rows) body.appendChild(makeRawRow(k, v, tagName));
+  for(const {k,v} of rows) body.appendChild(makeRawRow(k, v, tagName, rawAttrs));
   g.appendChild(body); container.appendChild(g);
 }
 
-function appendSchemaGroup(container, label, rows, tagName){
+function appendSchemaGroup(container, label, rows, tagName, rawAttrs){
   const g=document.createElement('div'); g.className='prop-group';
   const hdr=document.createElement('div'); hdr.className='prop-group-hdr'; hdr.textContent=label;
   const body=document.createElement('div'); body.className='prop-rows';
   hdr.addEventListener('click',()=>{ hdr.classList.toggle('collapsed'); body.style.display=hdr.classList.contains('collapsed')?'none':''; });
   g.appendChild(hdr);
-  for(const r of rows) body.appendChild(makeSchemaRow(r.k, r.v, r.param, tagName));
+  for(const r of rows) body.appendChild(makeSchemaRow(r.k, r.v, r.param, tagName, rawAttrs));
   g.appendChild(body); container.appendChild(g);
 }
 
-function makeRawRow(k, v, tagName){
+function makeRawRow(k, v, tagName, rawAttrs){
   const row=document.createElement('div'); row.className='prop-row';
   const kEl=document.createElement('div'); kEl.className='prop-key'; kEl.textContent=friendlyKey(k); kEl.title=k;
-  row.appendChild(kEl); row.appendChild(makeValueEl(v, null, k, tagName)); return row;
+  row.appendChild(kEl); row.appendChild(makeValueEl(v, null, k, tagName, rawAttrs)); return row;
 }
 
-function makeSchemaRow(k, v, param, tagName){
+function makeSchemaRow(k, v, param, tagName, rawAttrs){
   const isEmpty=!v||!v.trim();
   const row=document.createElement('div');
   row.className='prop-row'+(param&&param.required&&isEmpty?' row-missing':'');
@@ -696,10 +1049,10 @@ function makeSchemaRow(k, v, param, tagName){
     +(param&&param.type?' <span class="type-badge">'+escHtml(param.type)+'</span>':'')
     +(param&&param.required?' <span class="req-badge">*</span>':'');
   kEl.title=k+(param&&param.allowedValues?'\\nAllowed: '+param.allowedValues.join(', '):'');
-  row.appendChild(kEl); row.appendChild(makeValueEl(v, param, k, tagName)); return row;
+  row.appendChild(kEl); row.appendChild(makeValueEl(v, param, k, tagName, rawAttrs)); return row;
 }
 
-function makeValueEl(v, param, k, tagName){
+function makeValueEl(v, param, k, tagName, rawAttrs){
   const allowedVals = param && (param.allowedValues || (param.type === 'boolean' ? ['true', 'false'] : null));
   if(allowedVals && allowedVals.length > 0) {
     const select = document.createElement('select');
@@ -741,11 +1094,52 @@ function makeValueEl(v, param, k, tagName){
         tagName: tagName,
         lineNumber: propLineNo,
         attributeName: k,
-        newValue: select.value
+        newValue: select.value,
+        docId: rawAttrs ? rawAttrs['doc:id'] : undefined,
+        docName: rawAttrs ? rawAttrs['doc:name'] : undefined
       });
     });
     
     return select;
+  }
+
+  const isExpression = 
+    (v && v.startsWith('#[')) ||
+    ['message', 'value', 'expression', 'body', 'query', 'condition', 'payload', 'script'].includes(k) ||
+    (param && (param.type === 'expression' || param.type === 'DataWeave'));
+
+  if (isExpression) {
+    const textarea = document.createElement('textarea');
+    textarea.className = 'prop-input';
+    textarea.rows = 3;
+    textarea.style.fontFamily = 'monospace';
+    textarea.style.width = '100%';
+    textarea.style.maxWidth = '100%';
+    textarea.style.boxSizing = 'border-box';
+    textarea.value = v || '';
+    if (param && param.defaultValue) {
+      textarea.placeholder = param.defaultValue;
+    } else {
+      textarea.placeholder = '(not set)';
+    }
+
+    const commitChange = () => {
+      const newValue = textarea.value;
+      if (newValue === v) return;
+      vscode.postMessage({
+        command: 'updateAttribute',
+        tagName: tagName,
+        lineNumber: propLineNo,
+        attributeName: k,
+        newValue: newValue,
+        docId: rawAttrs ? rawAttrs['doc:id'] : undefined,
+        docName: rawAttrs ? rawAttrs['doc:name'] : undefined
+      });
+    };
+
+    textarea.addEventListener('change', commitChange);
+    textarea.addEventListener('blur', commitChange);
+    return textarea;
   }
 
   const input = document.createElement('input');
@@ -766,7 +1160,9 @@ function makeValueEl(v, param, k, tagName){
       tagName: tagName,
       lineNumber: propLineNo,
       attributeName: k,
-      newValue: newValue
+      newValue: newValue,
+      docId: rawAttrs ? rawAttrs['doc:id'] : undefined,
+      docName: rawAttrs ? rawAttrs['doc:name'] : undefined
     });
   };
 
@@ -921,12 +1317,19 @@ function drawPlusButton(parent, cx, cy, flow, step) {
 
 // ── Error-section sizing ──────────────────────────────────────────────────────
 function errorSectionHeight(flow){
-  if(!flow.errorHandler||!flow.errorHandler.length) return 0;
+  if(!flow.errorHandler||!flow.errorHandler.length) {
+    // Reserve space for the "+Error Handler" button (only for flows/sub-flows)
+    if (flow.kind === 'flow' || flow.kind === 'sub-flow') {
+      return EH_DIVIDER + 24;
+    }
+    return 0;
+  }
   if(collapsedFlows.has(flow.subgraphId + '_err')) {
     return EH_DIVIDER + EH_HDR;
   }
   let h = EH_DIVIDER + EH_HDR;
   for(const s of flow.errorHandler) h += EH_HDR + EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
+  h += 24; // space for "+ Error Strategy" button
   return h;
 }
 
@@ -950,8 +1353,32 @@ function flowSize(flow){
 
 // ── Draw error-handler section ────────────────────────────────────────────────
 function drawErrorSection(parent, flow, flowW, mainH){
-  if(!flow.errorHandler||!flow.errorHandler.length) return;
   let curY = mainH + EH_DIVIDER;
+  const hasEH = flow.errorHandler && flow.errorHandler.length;
+  if (!hasEH && (flow.kind === 'flow' || flow.kind === 'sub-flow')) {
+    // Draw a subtle "+Error Handler" button at the bottom of the flow
+    const btnG = svgEl('g', { cursor: 'pointer' }, parent);
+    const btnX = 10;
+    const btnY = curY + 2;
+    const btnW = 120;
+    const btnH = 18;
+    svgEl('rect', { x: btnX, y: btnY, width: btnW, height: btnH, rx: 3, fill: C.errHdr + '22', stroke: C.errHdr + '55', 'stroke-width': 1, 'stroke-dasharray': '3,2' }, btnG);
+    const btnLabel = svgEl('text', { x: btnX + btnW / 2, y: btnY + btnH / 2 + 1, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: C.errHdr, 'font-size': 9, 'font-weight': 600, style: 'pointer-events:none' }, btnG);
+    btnLabel.textContent = '＋ Error Handler';
+    btnG.addEventListener('mouseenter', () => { btnG.querySelector('rect').setAttribute('fill', C.errHdr + '44'); });
+    btnG.addEventListener('mouseleave', () => { btnG.querySelector('rect').setAttribute('fill', C.errHdr + '22'); });
+    btnG.addEventListener('click', (e) => {
+      e.stopPropagation();
+      vscode.postMessage({
+        command: 'addErrorHandler',
+        flowName: flow.name,
+        flowLineNumber: flow.lineNumber,
+        flowKind: flow.kind
+      });
+    });
+    return;
+  }
+  if (!hasEH) return;
 
   const isErrCollapsed = collapsedFlows.has(flow.subgraphId + '_err');
 
@@ -1033,7 +1460,69 @@ function drawErrorSection(parent, flow, flowW, mainH){
       }
       curY += EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
     }
+
+    // "+ Add Error Strategy" button at the bottom of the error handler section
+    const addStratG = svgEl('g', { cursor: 'pointer' }, parent);
+    const asBtnX = 10;
+    const asBtnY = curY;
+    const asBtnW = 150;
+    const asBtnH = 18;
+    svgEl('rect', { x: asBtnX, y: asBtnY, width: asBtnW, height: asBtnH, rx: 3, fill: C.errHdr + '18', stroke: C.errHdr + '44', 'stroke-width': 1, 'stroke-dasharray': '3,2' }, addStratG);
+    const asLabel = svgEl('text', { x: asBtnX + asBtnW / 2, y: asBtnY + asBtnH / 2 + 1, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: C.errHdr, 'font-size': 8, 'font-weight': 600, style: 'pointer-events:none' }, addStratG);
+    asLabel.textContent = '＋ Error Strategy';
+    addStratG.addEventListener('mouseenter', () => { addStratG.querySelector('rect').setAttribute('fill', C.errHdr + '44'); });
+    addStratG.addEventListener('mouseleave', () => { addStratG.querySelector('rect').setAttribute('fill', C.errHdr + '18'); });
+    addStratG.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Show a small menu to pick between on-error-propagate and on-error-continue
+      showErrorStrategyMenu(e.clientX, e.clientY, flow);
+    });
   }
+}
+
+function showErrorStrategyMenu(clientX, clientY, flow) {
+  const menu = document.getElementById('add-menu');
+  const menuList = document.getElementById('add-menu-list');
+  const menuSearch = document.getElementById('add-menu-search');
+  menu.style.left = clientX + 'px';
+  menu.style.top = Math.min(window.innerHeight - 160, clientY) + 'px';
+  menu.style.display = 'block';
+  menuSearch.value = '';
+  menuList.innerHTML = '';
+
+  var strategies = [
+    { tag: 'on-error-propagate', label: 'On Error Propagate', desc: 'Propagates error to parent' },
+    { tag: 'on-error-continue', label: 'On Error Continue', desc: 'Continues execution after error' }
+  ];
+
+  strategies.forEach(function(strat) {
+    var item = document.createElement('div');
+    item.className = 'pal-item';
+    item.style.paddingLeft = '12px';
+    var icon = document.createElement('div');
+    icon.className = 'pal-item-icon';
+    icon.style.background = strat.tag === 'on-error-propagate' ? C.errStratProp : C.errStratCont;
+    icon.textContent = '⚡';
+    item.appendChild(icon);
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'pal-item-name';
+    nameSpan.textContent = strat.label;
+    item.appendChild(nameSpan);
+    item.addEventListener('click', function() {
+      menu.style.display = 'none';
+      vscode.postMessage({
+        command: 'addErrorStrategy',
+        flowName: flow.name,
+        flowLineNumber: flow.lineNumber,
+        flowKind: flow.kind,
+        strategyTag: strat.tag
+      });
+    });
+    menuList.appendChild(item);
+  });
+
+  menuSearch.style.display = 'none';
+  setTimeout(function() { menuSearch.style.display = ''; }, 0);
 }
 
 // ── Draw one flow ─────────────────────────────────────────────────────────────
@@ -1080,9 +1569,24 @@ function drawFlow(parent, flow, x, y){
 
   if(!isCollapsed){
     if(!flow.steps.length){
-      const ep = svgEl('text',{x:w/2,y:FLOW_HDR+FLOW_PAD_V+NODE_H/2,
+      const ep = svgEl('text',{x:w/2 - 30,y:FLOW_HDR+FLOW_PAD_V+NODE_H/2,
         'text-anchor':'middle','dominant-baseline':'middle',fill:'#555','font-size':11,style:'pointer-events:none'},g);
       ep.textContent='Empty Flow';
+      // Plus button to add first component in empty flow
+      const emptyPlusG = svgEl('g', { cursor: 'pointer' }, g);
+      const epx = w/2 + 30;
+      const epy = FLOW_HDR+FLOW_PAD_V+NODE_H/2;
+      const epc = svgEl('circle', { cx: epx, cy: epy, r: 10, fill: C.nodeBg, stroke: C.arrow, 'stroke-width': 1.5 }, emptyPlusG);
+      const ept = svgEl('text', { x: epx, y: epy + 4, 'text-anchor': 'middle', 'font-size': 14, fill: C.arrow, 'font-weight': 'bold', style: 'pointer-events:none' }, emptyPlusG);
+      ept.textContent = '+';
+      emptyPlusG.addEventListener('mouseenter', () => { epc.setAttribute('fill', C.nodeHover); epc.setAttribute('stroke', C.nodeSelectedBorder); ept.setAttribute('fill', C.hdrText); });
+      emptyPlusG.addEventListener('mouseleave', () => { epc.setAttribute('fill', C.nodeBg); epc.setAttribute('stroke', C.arrow); ept.setAttribute('fill', C.arrow); });
+      emptyPlusG.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Use a virtual step with the flow's opening tag as anchor
+        const virtualStep = { tagName: flow.kind, lineNumber: flow.lineNumber, rawAttrs: {} };
+        showAddMenu(e.clientX, e.clientY, flow, virtualStep);
+      });
     } else {
       flow.steps.forEach((step,i)=>{
         const nx = FLOW_PAD_H + i*(NODE_W+NODE_GAP);
@@ -1190,12 +1694,22 @@ document.getElementById('b-fit').onclick = fitToWindow;
 document.getElementById('b-ref').onclick = ()=>vscode.postMessage({command:'refresh'});
 document.getElementById('b-svg').onclick = exportSvg;
 
+// ── Add Flow / Sub-Flow buttons ──────────────────────────────────────────────
+document.getElementById('b-add-flow').onclick = () => {
+  var name = 'new-flow';
+  vscode.postMessage({ command: 'addFlow', kind: 'flow', name: name });
+};
+document.getElementById('b-add-subflow').onclick = () => {
+  var name = 'new-sub-flow';
+  vscode.postMessage({ command: 'addFlow', kind: 'sub-flow', name: name });
+};
+
 // Plain scroll = pan; Ctrl+scroll = zoom  (Anypoint Studio behaviour)
 cw.addEventListener('wheel',e=>{
   e.preventDefault();
   if(e.ctrlKey||e.metaKey){
     const r=cw.getBoundingClientRect();
-    const zoomIntensity = 0.0015;
+    const zoomIntensity = 0.0035;
     const factor = Math.exp(-e.deltaY * zoomIntensity);
     zoomAt(factor, e.clientX-r.left, e.clientY-r.top);
   } else {
@@ -1316,6 +1830,16 @@ function renderPalette(filterText = '') {
         item.appendChild(nameSpan);
         
         item.addEventListener('click', () => {
+          // Handle structural elements directly (no need for + button)
+          if (group.connector === 'Mule Structure') {
+            if (op === 'flow' || op === 'sub-flow') {
+              vscode.postMessage({ command: 'addFlow', kind: op, name: 'new-' + op });
+              showToast('Adding new ' + op + '...');
+              return;
+            }
+            showToast('"' + op + '" \u2014 Use the (\uff0b Error Handler) or (\uff0b Error Strategy) buttons on the canvas.');
+            return;
+          }
           showToast('Now select any (+) button on the canvas to insert "' + fullTag + '"');
           document.querySelectorAll('.plus-btn circle').forEach(c => {
             c.setAttribute('stroke', '#ffcc00');
@@ -1373,6 +1897,8 @@ function renderAddMenuList(filterText = '') {
   const query = filterText.toLowerCase().trim();
   
   ALL_CATALOG.forEach(group => {
+    // Skip structural elements from the component insertion popup
+    if (group.connector === 'Mule Structure') return;
     const matchingOps = group.operations.filter(op => {
       const fullTag = group.prefix ? group.prefix + ':' + op : op;
       return fullTag.toLowerCase().includes(query) || group.connector.toLowerCase().includes(query);
@@ -1473,10 +1999,17 @@ window.addEventListener('message',e=>{
     renderExchangeResults(msg.results, msg.error);
   } else if(msg.command==='connectorSchema'){
     setSchemaLoading(false);
+    if (msg.success) {
+      console.log('SUCCESS: Loaded connector schema for tag "' + msg.tagName + '" from Exchange JAR.');
+    } else {
+      console.error('FAIL: Failed to load connector schema for tag "' + msg.tagName + '". Error: ' + (msg.error || 'No matching POM dependency or empty operations schema.'));
+    }
     if(propsPanel.classList.contains('open')){
       const oldScroll = propsBody.scrollTop;
-      if(msg.matched){
-        renderSchemaGroups(msg.tagName, msg.rawAttrs, msg.matched);
+      if (msg.tagName === 'logger') {
+        renderLoggerProperties(msg.tagName, msg.rawAttrs);
+      } else if(msg.matched){
+        renderNodeProperties(msg.tagName, msg.rawAttrs, msg.matched);
       } else if(msg.operations && msg.operations.length > 0){
         const localName = msg.tagName.includes(':') 
           ? msg.tagName.split(':')[1].toLowerCase() 
@@ -1486,12 +2019,12 @@ window.addEventListener('message',e=>{
           localName.includes(op.name.toLowerCase())
         );
         if(fuzzy){
-          renderSchemaGroups(msg.tagName, msg.rawAttrs, fuzzy);
+          renderNodeProperties(msg.tagName, msg.rawAttrs, fuzzy);
         } else {
-          renderSchemaGroups(msg.tagName, msg.rawAttrs, msg.operations[0]);
+          renderNodeProperties(msg.tagName, msg.rawAttrs, msg.operations[0]);
         }
       } else {
-        renderRawAttrGroups(msg.tagName, msg.rawAttrs);
+        renderNodeProperties(msg.tagName, msg.rawAttrs, null);
       }
       propsBody.scrollTop = oldScroll;
     }

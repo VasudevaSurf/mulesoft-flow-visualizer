@@ -10,6 +10,7 @@
  * to the Webview via postMessage without any circular references.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.CHILD_SCHEMA = exports.TAG_META = void 0;
 exports.parseMuleXml = parseMuleXml;
 exports.generateMermaidDiagram = generateMermaidDiagram;
 const fast_xml_parser_1 = require("fast-xml-parser");
@@ -23,31 +24,31 @@ const fast_xml_parser_1 = require("fast-xml-parser");
  * "subroutine" → subprocess    [[text]]
  * "cylinder"   → DB / store    [(text)]
  */
-const TAG_META = {
+exports.TAG_META = {
     // HTTP / HTTPS
-    "http:listener": { label: "HTTP Listener", shape: "stadium" },
-    "http:request": { label: "HTTP Request", shape: "rect" },
-    "https:listener": { label: "HTTPS Listener", shape: "stadium" },
-    "https:request": { label: "HTTPS Request", shape: "rect" },
+    "http:listener": { label: "HTTP Listener", shape: "stadium", defaultAttrs: { path: "", allowedMethods: "", "config-ref": "" }, requiredAttrs: ["path", "config-ref"] },
+    "http:request": { label: "HTTP Request", shape: "rect", defaultAttrs: { method: "GET", path: "", "config-ref": "" }, requiredAttrs: ["path", "config-ref"] },
+    "https:listener": { label: "HTTPS Listener", shape: "stadium", defaultAttrs: { path: "", "config-ref": "" }, requiredAttrs: ["path", "config-ref"] },
+    "https:request": { label: "HTTPS Request", shape: "rect", defaultAttrs: { method: "GET", path: "", "config-ref": "" }, requiredAttrs: ["path", "config-ref"] },
     // Core
-    "flow-ref": { label: "Flow Reference", shape: "subroutine" },
-    logger: { label: "Logger", shape: "rect" },
-    "set-payload": { label: "Set Payload", shape: "rect" },
-    "set-variable": { label: "Set Variable", shape: "rect" },
-    "set-property": { label: "Set Property", shape: "rect" },
-    choice: { label: "Choice Router", shape: "diamond" },
-    "first-successful": { label: "First Successful", shape: "diamond" },
-    "round-robin": { label: "Round Robin", shape: "diamond" },
-    scatter_gather: { label: "Scatter-Gather", shape: "diamond" },
-    "scatter-gather": { label: "Scatter-Gather", shape: "diamond" },
-    foreach: { label: "For Each", shape: "diamond" },
-    "until-successful": { label: "Until Successful", shape: "diamond" },
-    "async": { label: "Async Scope", shape: "rect" },
-    "try": { label: "Try Scope", shape: "rect" },
-    "raise-error": { label: "Raise Error", shape: "rect" },
+    "flow-ref": { label: "Flow Reference", shape: "subroutine", defaultAttrs: { name: "" }, requiredAttrs: ["name"] },
+    logger: { label: "Logger", shape: "rect", defaultAttrs: { level: "INFO", message: "#[]" } },
+    "set-payload": { label: "Set Payload", shape: "rect", defaultAttrs: { value: "#[]", mimeType: "" } },
+    "set-variable": { label: "Set Variable", shape: "rect", defaultAttrs: { value: "#[]", variableName: "" }, requiredAttrs: ["value", "variableName"] },
+    "set-property": { label: "Set Property", shape: "rect", defaultAttrs: { value: "#[]", propertyName: "" }, requiredAttrs: ["value", "propertyName"] },
+    choice: { label: "Choice Router", shape: "diamond", defaultAttrs: { "doc:name": "" } },
+    "first-successful": { label: "First Successful", shape: "diamond", defaultAttrs: { "doc:name": "" } },
+    "round-robin": { label: "Round Robin", shape: "diamond", defaultAttrs: { "doc:name": "" } },
+    scatter_gather: { label: "Scatter-Gather", shape: "diamond", defaultAttrs: { "doc:name": "" } },
+    "scatter-gather": { label: "Scatter-Gather", shape: "diamond", defaultAttrs: { "doc:name": "" } },
+    foreach: { label: "For Each", shape: "diamond", defaultAttrs: { collection: "#[]", batchSize: "1" } },
+    "until-successful": { label: "Until Successful", shape: "diamond", defaultAttrs: { maxRetries: "5", millisBetweenRetries: "1000" } },
+    async: { label: "Async Scope", shape: "rect", defaultAttrs: { "doc:name": "" } },
+    try: { label: "Try Scope", shape: "rect", defaultAttrs: { "doc:name": "" } },
+    "raise-error": { label: "Raise Error", shape: "rect", defaultAttrs: { type: "", description: "" }, requiredAttrs: ["type"] },
     // DataWeave / Transform
-    "ee:transform": { label: "Transform Message", shape: "rect" },
-    "dw:transform-message": { label: "Transform Message", shape: "rect" },
+    "ee:transform": { label: "Transform Message", shape: "rect", defaultAttrs: { "doc:name": "" } },
+    "dw:transform-message": { label: "Transform Message", shape: "rect", defaultAttrs: { "doc:name": "" } },
     // Database
     "db:select": { label: "DB Select", shape: "cylinder" },
     "db:insert": { label: "DB Insert", shape: "cylinder" },
@@ -80,10 +81,10 @@ const TAG_META = {
     // Validation / Error
     "validation:is-true": { label: "Validate: Is True", shape: "diamond" },
     "validation:is-not-null": { label: "Validate: Not Null", shape: "diamond" },
-    "on-error-propagate": { label: "On Error Propagate", shape: "rect" },
-    "on-error-continue": { label: "On Error Continue", shape: "rect" },
+    "on-error-propagate": { label: "On Error Propagate", shape: "rect", defaultAttrs: { type: "", logException: "true" } },
+    "on-error-continue": { label: "On Error Continue", shape: "rect", defaultAttrs: { type: "", logException: "true" } },
     // Scheduler / Triggers
-    scheduler: { label: "Scheduler", shape: "stadium" },
+    scheduler: { label: "Scheduler", shape: "stadium", defaultAttrs: { "doc:name": "" } },
     // APIkit
     "apikit:router": { label: "APIkit Router", shape: "rect" },
     // Crypto / Security
@@ -93,6 +94,32 @@ const TAG_META = {
     "ee:cache": { label: "Cache Scope", shape: "rect" },
     // OAuth
     "oauth2:validate-token": { label: "Validate OAuth Token", shape: "diamond" },
+};
+exports.CHILD_SCHEMA = {
+    "ee:transform": [
+        { key: "ee:message>ee:set-payload", label: "Set Payload", type: "cdata", default: "%dw 2.0\\noutput application/json\\n---\\npayload" },
+        { key: "ee:variables>ee:set-variable", label: "Set Variables", type: "cdata", default: "" }
+    ],
+    "dw:transform-message": [
+        { key: "ee:message>ee:set-payload", label: "Set Payload", type: "cdata", default: "%dw 2.0\\noutput application/json\\n---\\npayload" },
+        { key: "ee:variables>ee:set-variable", label: "Set Variables", type: "cdata", default: "" }
+    ],
+    "db:select": [
+        { key: "db:sql", label: "SQL Query", type: "cdata", default: "" },
+        { key: "db:input-parameters", label: "Input Parameters", type: "cdata", default: "" }
+    ],
+    "scheduler": [
+        {
+            key: "scheduling-strategy>fixed-frequency",
+            label: "Fixed Frequency Strategy",
+            type: "attrs",
+            subfields: [
+                { name: "frequency", type: "string" },
+                { name: "timeUnit", type: "enum", options: ["MILLISECONDS", "SECONDS", "MINUTES", "HOURS", "DAYS"] }
+            ],
+            default: ""
+        }
+    ]
 };
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 /** Sanitise a string so it can be used as a Mermaid node identifier */
@@ -170,7 +197,7 @@ const RECURSIVE_TAGS = new Set([
  * becomes: { "http:response.statusCode": "#[...]", "http:response > http:headers": "expr" }
  */
 function flattenChildren(obj, prefix, out, depth = 0) {
-    if (depth > 4)
+    if (depth > 6)
         return; // prevent infinite recursion on deeply nested XML
     for (const [key, value] of Object.entries(obj)) {
         // Skip attribute keys (already handled), text nodes, and metadata
@@ -183,10 +210,13 @@ function flattenChildren(obj, prefix, out, depth = 0) {
         for (const item of items) {
             if (item === null || item === undefined)
                 continue;
-            const childPath = prefix ? `${prefix} > ${key}` : key;
+            const childPath = prefix ? `${prefix}>${key}` : key;
             if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
                 // Leaf text content
-                out[childPath] = String(item).trim();
+                const text = String(item).trim();
+                if (text.length > 0) {
+                    out[childPath] = text;
+                }
             }
             else if (typeof item === "object") {
                 const child = item;
@@ -201,7 +231,7 @@ function flattenChildren(obj, prefix, out, depth = 0) {
                     else if (ck === "#text" && (typeof cv === "string" || typeof cv === "number")) {
                         // Text content of the child element
                         const text = String(cv).trim();
-                        if (text.length > 0 && text.length < 500) {
+                        if (text.length > 0 && text.length < 50000) {
                             out[childPath] = text;
                         }
                     }
@@ -214,7 +244,7 @@ function flattenChildren(obj, prefix, out, depth = 0) {
 }
 /** Derive a FlowStep from an XML tag name + attributes object */
 function tagToStep(tagName, attrs, flowId, index) {
-    const meta = TAG_META[tagName];
+    const meta = exports.TAG_META[tagName];
     // Build a human-readable label.
     // sanitiseAttr strips characters that break Mermaid node syntax
     // (parentheses, brackets, quotes) from raw XML attribute values.
@@ -268,6 +298,9 @@ function tagToStep(tagName, attrs, flowId, index) {
     // Also extract nested child element properties (MuleSoft config lives here)
     // e.g. <http:response statusCode="..."><http:headers>expr</http:headers></http:response>
     flattenChildren(attrs, '', rawAttrs);
+    if (tagName === "ee:transform" || tagName === "dw:transform-message") {
+        console.log('[MuleViz] flattenChildren ee:transform keys:', Object.keys(rawAttrs));
+    }
     return {
         label,
         nodeId,

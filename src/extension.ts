@@ -18,7 +18,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { parseMuleXml, ParsedFlow } from "./muleParser";
+import { parseMuleXml, ParsedFlow, TAG_META, ChildFieldDef, CHILD_SCHEMA } from "./muleParser";
 import { getWebviewContent, getNonce } from "./webviewContent";
 import {
   extractNamespaces,
@@ -77,7 +77,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (debounceTimer) clearTimeout(debounceTimer);
     const delay = cfg.get<number>("refreshDebounceMs", 800);
-    debounceTimer = setTimeout(() => updatePanel(e.document), delay);
+    debounceTimer = setTimeout(() => {
+      if (e.document.isClosed) return;
+      updatePanel(e.document);
+    }, delay);
   });
 
   const onChangeEditor = vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -130,11 +133,11 @@ function openOrRevealPanel(context: vscode.ExtensionContext): void {
           break;
 
         case "updateAttribute": {
-          const { tagName, lineNumber, attributeName, newValue } = message;
+          const { tagName, lineNumber, attributeName, newValue, docId, docName } = message;
           if (currentFileUri && typeof lineNumber === "number" && tagName && attributeName) {
             try {
               const document = await vscode.workspace.openTextDocument(currentFileUri);
-              const success = await updateXmlAttributeInEditor(document, tagName, lineNumber, attributeName, newValue);
+              const success = await updateXmlAttributeInEditor(document, tagName, lineNumber, attributeName, newValue, docId, docName);
               if (success) {
                 updatePanel(document, true);
               }
@@ -221,6 +224,59 @@ function openOrRevealPanel(context: vscode.ExtensionContext): void {
           }
           break;
         }
+        case "addFlow": {
+          const { kind, name } = message;
+          console.log(`[MuleViz] addFlow received: kind=${kind} name=${name}`);
+          if (currentFileUri) {
+            try {
+              const document = await vscode.workspace.openTextDocument(currentFileUri);
+              const success = await insertFlowInXml(document, kind, name);
+              console.log(`[MuleViz] insertFlowInXml result: ${success}`);
+              if (success) {
+                updatePanel(document, true);
+              }
+            } catch (err) {
+              console.error("[MuleViz] Failed to add flow:", err);
+            }
+          }
+          break;
+        }
+
+        case "addErrorHandler": {
+          const { flowName: ehFlowName, flowLineNumber: ehFlowLine, flowKind: ehFlowKind } = message;
+          console.log(`[MuleViz] addErrorHandler received: flowName=${ehFlowName} flowLine=${ehFlowLine}`);
+          if (currentFileUri && typeof ehFlowLine === "number") {
+            try {
+              const document = await vscode.workspace.openTextDocument(currentFileUri);
+              const success = await insertErrorHandlerInXml(document, ehFlowLine, ehFlowName, ehFlowKind);
+              console.log(`[MuleViz] insertErrorHandlerInXml result: ${success}`);
+              if (success) {
+                updatePanel(document, true);
+              }
+            } catch (err) {
+              console.error("[MuleViz] Failed to add error handler:", err);
+            }
+          }
+          break;
+        }
+
+        case "addErrorStrategy": {
+          const { flowName: esFlowName, flowLineNumber: esFlowLine, strategyTag } = message;
+          console.log(`[MuleViz] addErrorStrategy received: flowName=${esFlowName} strategy=${strategyTag}`);
+          if (currentFileUri && typeof esFlowLine === "number" && strategyTag) {
+            try {
+              const document = await vscode.workspace.openTextDocument(currentFileUri);
+              const success = await insertErrorStrategyInXml(document, esFlowLine, esFlowName, strategyTag);
+              console.log(`[MuleViz] insertErrorStrategyInXml result: ${success}`);
+              if (success) {
+                updatePanel(document, true);
+              }
+            } catch (err) {
+              console.error("[MuleViz] Failed to add error strategy:", err);
+            }
+          }
+          break;
+        }
 
         default:
           console.warn("[MuleViz] Unknown message from webview:", message);
@@ -260,13 +316,19 @@ async function handleSchemaRequest(
   // 1. Get pom.xml deps (cached per-session in currentPomDeps)
   const pomDeps = await ensurePomDeps();
 
-  // 2. Fetch operations for this connector (downloads JAR once, then caches)
+  const nsUri = currentNamespaces.get(prefix) ?? "";
+  const dep = matchDepToPrefix(prefix, nsUri, pomDeps);
+  
+  const localName = tagName.includes(":") ? tagName.split(":")[1] : tagName;
+
   let operations: OperationDef[] = [];
   let matched: OperationDef | null = null;
   let error: string | undefined;
+  let isBuiltIn = false;
 
-  try {
-    if (prefix) {
+  // STEP 1 — Try matchDepToPrefix()
+  if (dep) {
+    try {
       operations = await getConnectorOperations(
         prefix,
         currentNamespaces,
@@ -275,10 +337,56 @@ async function handleSchemaRequest(
         currentPomRepoUrls
       );
       matched = findOperation(operations, tagName) ?? null;
+      
+      if (operations && operations.length > 0) {
+        console.log(`[MuleViz] Loaded schema for "${tagName}" from Exchange JAR/cache`);
+      } else {
+        isBuiltIn = true;
+      }
+    } catch (err) {
+      error = String(err);
+      console.error(`[MuleViz] FAIL: Schema lookup failed for tag "${tagName}" (prefix "${prefix}"). Error:`, err);
+      isBuiltIn = true;
     }
-  } catch (err) {
-    error = String(err);
-    console.error("[MuleViz] Schema lookup failed:", err);
+  } else {
+    isBuiltIn = true;
+  }
+
+  // STEP 2 — Only if matchDepToPrefix() returns undefined (or we fell back to built-in)
+  if (isBuiltIn) {
+    const meta = TAG_META[tagName] || TAG_META[localName];
+    if (meta) {
+      const defaultAttrs = meta.defaultAttrs || {};
+      const requiredAttrs = meta.requiredAttrs || [];
+      const parameters = Object.entries(defaultAttrs).map(([key, val]) => {
+        let type = "string";
+        if (val.startsWith("#[")) {
+          type = "expression";
+        } else if (val === "true" || val === "false") {
+          type = "boolean";
+        }
+        return {
+          name: key,
+          type,
+          required: requiredAttrs.includes(key),
+          defaultValue: val || undefined
+        };
+      });
+      operations = [{
+        name: localName,
+        parameters
+      }];
+      matched = operations[0];
+      console.log(`[MuleViz] Resolved built-in schema for "${tagName}" from TAG_META (runtime component, not in pom.xml)`);
+    } else {
+      // Generic fallback
+      operations = [{
+        name: localName,
+        parameters: []
+      }];
+      matched = operations[0];
+      console.log(`[MuleViz] Resolved built-in schema for "${tagName}" from TAG_META (runtime component, not in pom.xml)`);
+    }
   }
 
   // 3. Post the result back to the webview
@@ -290,6 +398,7 @@ async function handleSchemaRequest(
     operations,
     matched,
     error,
+    success: isBuiltIn ? true : (!error && operations.length > 0),
   });
 }
 
@@ -357,66 +466,72 @@ function updatePanelFromActiveEditor(force = false): void {
 function updatePanel(doc: vscode.TextDocument, _force = false): void {
   if (!panel) return;
 
-  const cfg = vscode.workspace.getConfiguration("mulesoftFlowVisualizer");
-  const theme = cfg.get<string>("theme", "default");
-  const showErrorHandlers = cfg.get<boolean>("showErrorHandlers", true);
+  try {
+    if (doc.isClosed) return;
 
-  const xmlText = doc.getText();
-  currentXmlText = xmlText;
+    const cfg = vscode.workspace.getConfiguration("mulesoftFlowVisualizer");
+    const theme = cfg.get<string>("theme", "default");
+    const showErrorHandlers = cfg.get<boolean>("showErrorHandlers", true);
 
-  // Update namespace map for this file
-  currentNamespaces = extractNamespaces(xmlText);
+    const xmlText = doc.getText();
+    currentXmlText = xmlText;
 
-  const { flows: allFlows, warnings } = parseMuleXml(xmlText);
-  const flows = showErrorHandlers
-    ? allFlows
-    : allFlows.filter((f) => f.kind !== "error-handler");
+    // Update namespace map for this file
+    currentNamespaces = extractNamespaces(xmlText);
 
-  currentFlows = flows;
+    const { flows: allFlows, warnings } = parseMuleXml(xmlText);
+    const flows = showErrorHandlers
+      ? allFlows
+      : allFlows.filter((f) => f.kind !== "error-handler");
 
-  const serializeStep = (s: typeof flows[0]["steps"][0]) => ({
-    label: s.label,
-    nodeId: s.nodeId,
-    tagName: s.tagName,
-    shape: s.shape,
-    flowRefTarget: s.flowRefTarget || null,
-    rawAttrs: (s as any).rawAttrs || {},
-    lineNumber: s.lineNumber,
-  });
+    currentFlows = flows;
 
-  const serializedFlows = flows.map((f) => ({
-    kind: f.kind,
-    name: f.name,
-    lineNumber: f.lineNumber,
-    subgraphId: f.subgraphId,
-    steps: f.steps.map(serializeStep),
-    errorHandler: f.errorHandler
-      ? f.errorHandler.map((eh) => ({
-        type: eh.type,
-        label: eh.label,
-        steps: eh.steps.map(serializeStep),
-      }))
-      : null,
-  }));
-
-  if (isFirstRender()) {
-    panel.title = buildPanelTitle(doc);
-    panel.webview.html = getWebviewContent({
-      mermaidSrc: "",
-      flows,
-      nonce: getNonce(),
-      webview: panel.webview,
-      warnings,
-      theme,
+    const serializeStep = (s: typeof flows[0]["steps"][0]) => ({
+      label: s.label,
+      nodeId: s.nodeId,
+      tagName: s.tagName,
+      shape: s.shape,
+      flowRefTarget: s.flowRefTarget || null,
+      rawAttrs: (s as any).rawAttrs || {},
+      lineNumber: s.lineNumber,
     });
-    markRendered();
-  } else {
-    panel.title = buildPanelTitle(doc);
-    void panel.webview.postMessage({ command: "updateFlows", flows: serializedFlows });
-  }
 
-  if (extensionContext) {
-    void sendConnectorCatalog(extensionContext);
+    const serializedFlows = flows.map((f) => ({
+      kind: f.kind,
+      name: f.name,
+      lineNumber: f.lineNumber,
+      subgraphId: f.subgraphId,
+      steps: f.steps.map(serializeStep),
+      errorHandler: f.errorHandler
+        ? f.errorHandler.map((eh) => ({
+          type: eh.type,
+          label: eh.label,
+          steps: eh.steps.map(serializeStep),
+        }))
+        : null,
+    }));
+
+    if (isFirstRender()) {
+      panel.title = buildPanelTitle(doc);
+      panel.webview.html = getWebviewContent({
+        mermaidSrc: "",
+        flows,
+        nonce: getNonce(),
+        webview: panel.webview,
+        warnings,
+        theme,
+      });
+      markRendered();
+    } else {
+      panel.title = buildPanelTitle(doc);
+      void panel.webview.postMessage({ command: "updateFlows", flows: serializedFlows });
+    }
+
+    if (extensionContext) {
+      void sendConnectorCatalog(extensionContext);
+    }
+  } catch (err) {
+    console.warn("[MuleViz] Failed to update panel (document may have been closed or disposed):", err);
   }
 }
 
@@ -515,8 +630,34 @@ async function updateXmlAttributeInEditor(
   tagName: string,
   lineNumber: number,
   attributeName: string,
-  newValue: string
+  newValue: string,
+  docId?: string,
+  docName?: string
 ): Promise<boolean> {
+  const schema = CHILD_SCHEMA[tagName] || [];
+  const matchedField = schema.find(f => f.key === attributeName || attributeName.startsWith(f.key + '.'));
+  
+  if (matchedField || attributeName.includes(">")) {
+    const fieldDef: ChildFieldDef = matchedField || {
+      key: attributeName,
+      label: attributeName,
+      type: attributeName.includes(".") ? "attrs" : "cdata"
+    };
+    
+    const xmlText = document.getText();
+    const updatedXml = updateChildElementInXml(xmlText, tagName, docId, docName, fieldDef, newValue, lineNumber, attributeName);
+    if (updatedXml !== xmlText) {
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(xmlText.length)
+      );
+      edit.replace(document.uri, fullRange, updatedXml);
+      return vscode.workspace.applyEdit(edit);
+    }
+    return false;
+  }
+
   const xmlText = document.getText();
   const lines = xmlText.split("\n");
   
@@ -609,61 +750,645 @@ async function updateXmlAttributeInEditor(
   return vscode.workspace.applyEdit(edit);
 }
 
-async function sendConnectorCatalog(context: vscode.ExtensionContext): Promise<void> {
-  if (!panel) return;
+function findElementEnd(xmlText: string, startIdx: number, tagName: string): number {
+  let idx = startIdx;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let foundOpeningEnd = false;
+  let isSelfClosing = false;
   
-  const pomDeps = await ensurePomDeps();
-  const catalog: { prefix: string; connector: string; operations: string[] }[] = [];
-  
-  // 1. Add core scopes
-  catalog.push({
-    prefix: "",
-    connector: "Mule Core",
-    operations: [
-      "logger",
-      "set-payload",
-      "set-variable",
-      "flow-ref",
-      "choice",
-      "foreach",
-      "try",
-      "async",
-      "scatter-gather",
-    ],
-  });
-  
-  // 2. Fetch operations for each namespace prefix in the document
-  for (const prefix of currentNamespaces.keys()) {
-    if (prefix === "mule" || prefix === "xsi" || prefix === "doc" || prefix === "") {
-      continue;
+  while (idx < xmlText.length) {
+    const char = xmlText[idx];
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '>') {
+      foundOpeningEnd = true;
+      isSelfClosing = xmlText.substring(Math.max(0, idx - 1), idx).startsWith("/");
+      idx++;
+      break;
     }
-    try {
-      const ops = await getConnectorOperations(
-        prefix,
-        currentNamespaces,
-        pomDeps,
-        context.globalStorageUri,
-        currentPomRepoUrls
-      );
-      if (ops && ops.length > 0) {
-        const nsUri = currentNamespaces.get(prefix) ?? "";
-        const dep = matchDepToPrefix(prefix, nsUri, pomDeps);
-        const connectorName = dep ? dep.artifactId : `${prefix}-connector`;
-        catalog.push({
-          prefix,
-          connector: connectorName,
-          operations: ops.map(o => o.name),
-        });
+    idx++;
+  }
+  
+  if (!foundOpeningEnd) return -1;
+  if (isSelfClosing) return idx;
+  
+  let depth = 1;
+  let tempIdx = idx;
+  const openTagPattern = `<${tagName}`;
+  const closeTagPattern = `</${tagName}>`;
+  
+  while (tempIdx < xmlText.length) {
+    const nextOpen = xmlText.indexOf(openTagPattern, tempIdx);
+    const nextClose = xmlText.indexOf(closeTagPattern, tempIdx);
+    
+    if (nextOpen === -1 && nextClose === -1) {
+      break;
+    }
+    
+    if (nextOpen !== -1 && (nextClose === -1 || nextOpen < nextClose)) {
+      depth++;
+      tempIdx = nextOpen + openTagPattern.length;
+    } else {
+      depth--;
+      if (depth === 0) {
+        return nextClose + closeTagPattern.length;
       }
-    } catch (err) {
-      console.warn(`[MuleViz] Failed to load catalog for prefix "${prefix}":`, err);
+      tempIdx = nextClose + closeTagPattern.length;
     }
   }
   
+  return -1;
+}
+
+function findParentElementBounds(
+  xmlText: string,
+  parentTag: string,
+  docId: string | undefined,
+  docName: string | undefined,
+  lineNumber: number
+): { startIdx: number; endIdx: number } | null {
+  
+  if (docId) {
+    let idIdx = xmlText.indexOf(`doc:id="${docId}"`);
+    if (idIdx === -1) idIdx = xmlText.indexOf(`doc:id='${docId}'`);
+    if (idIdx !== -1) {
+      const beforeId = xmlText.substring(0, idIdx);
+      const tagOpenIdx = beforeId.lastIndexOf(`<${parentTag}`);
+      if (tagOpenIdx !== -1) {
+        const endIdx = findElementEnd(xmlText, tagOpenIdx, parentTag);
+        if (endIdx !== -1) {
+          return { startIdx: tagOpenIdx, endIdx };
+        }
+      }
+    }
+  }
+
+  if (docName) {
+    let nameIdx = xmlText.indexOf(`doc:name="${docName}"`);
+    if (nameIdx === -1) nameIdx = xmlText.indexOf(`doc:name='${docName}'`);
+    if (nameIdx !== -1) {
+      const beforeName = xmlText.substring(0, nameIdx);
+      const tagOpenIdx = beforeName.lastIndexOf(`<${parentTag}`);
+      if (tagOpenIdx !== -1) {
+        const between = beforeName.substring(tagOpenIdx, nameIdx);
+        if (!between.includes(">")) {
+          const endIdx = findElementEnd(xmlText, tagOpenIdx, parentTag);
+          if (endIdx !== -1) {
+            return { startIdx: tagOpenIdx, endIdx };
+          }
+        }
+      }
+    }
+  }
+
+  const lines = xmlText.split("\n");
+  const targetLineIdx = lineNumber - 1;
+  let foundLineIdx = -1;
+  let foundCharIdx = -1;
+  
+  for (let offset = 0; offset <= 5; offset++) {
+    for (const sign of [1, -1]) {
+      const idx = targetLineIdx + sign * offset;
+      if (idx >= 0 && idx < lines.length) {
+        const checkIndex = lines[idx].indexOf(`<${parentTag}`);
+        if (checkIndex !== -1) {
+          foundLineIdx = idx;
+          foundCharIdx = checkIndex;
+          break;
+        }
+      }
+    }
+    if (foundLineIdx !== -1) break;
+  }
+  
+  if (foundLineIdx !== -1) {
+    let tagOpenIdx = 0;
+    for (let i = 0; i < foundLineIdx; i++) {
+      tagOpenIdx += lines[i].length + 1;
+    }
+    tagOpenIdx += foundCharIdx;
+    const endIdx = findElementEnd(xmlText, tagOpenIdx, parentTag);
+    if (endIdx !== -1) {
+      return { startIdx: tagOpenIdx, endIdx };
+    }
+  }
+
+  return null;
+}
+
+function updateNestedSegments(
+  innerXml: string,
+  segments: string[],
+  segIdx: number,
+  newValue: string,
+  type: "cdata" | "text",
+  baseIndent: string,
+  indentStep: string
+): string {
+  const currentTag = segments[segIdx];
+  const isLeaf = segIdx === segments.length - 1;
+  
+  const openPattern = `<${currentTag}\\b`;
+  const openIdx = innerXml.search(new RegExp(openPattern, 'i'));
+  
+  if (openIdx !== -1) {
+    let depth = 1;
+    let idx = openIdx;
+    let foundOpeningEnd = false;
+    let isSelfClosing = false;
+    
+    while (idx < innerXml.length) {
+      const char = innerXml[idx];
+      if (char === '"') {
+        idx = innerXml.indexOf('"', idx + 1);
+        if (idx === -1) idx = innerXml.length;
+      } else if (char === "'") {
+        idx = innerXml.indexOf("'", idx + 1);
+        if (idx === -1) idx = innerXml.length;
+      } else if (char === '>') {
+        foundOpeningEnd = true;
+        isSelfClosing = innerXml.substring(Math.max(0, idx - 1), idx).startsWith("/");
+        idx++;
+        break;
+      }
+      idx++;
+    }
+    
+    if (!foundOpeningEnd) {
+      return insertNewNestedSegments(innerXml, segments.slice(segIdx), newValue, type, baseIndent, indentStep);
+    }
+    
+    if (isSelfClosing) {
+      const tagHeader = innerXml.substring(openIdx, idx - 2);
+      if (isLeaf) {
+        const content = type === "cdata" ? `<![CDATA[${newValue}]]>` : newValue;
+        const expanded = `${tagHeader}>\n${baseIndent}${indentStep}${content}\n${baseIndent}</${currentTag}>`;
+        return innerXml.substring(0, openIdx) + expanded + innerXml.substring(idx);
+      } else {
+        const innerContent = insertNewNestedSegments("", segments.slice(segIdx + 1), newValue, type, baseIndent + indentStep, indentStep);
+        const expanded = `${tagHeader}>\n${innerContent.trimStart()}\n${baseIndent}</${currentTag}>`;
+        return innerXml.substring(0, openIdx) + expanded + innerXml.substring(idx);
+      }
+    }
+    
+    const openTagPattern = `<${currentTag}`;
+    const closeTagPattern = `</${currentTag}>`;
+    let tempIdx = idx;
+    let closeIdx = -1;
+    
+    while (tempIdx < innerXml.length) {
+      const nextOpen = innerXml.indexOf(openTagPattern, tempIdx);
+      const nextClose = innerXml.indexOf(closeTagPattern, tempIdx);
+      if (nextOpen === -1 && nextClose === -1) break;
+      if (nextOpen !== -1 && (nextClose === -1 || nextOpen < nextClose)) {
+        depth++;
+        tempIdx = nextOpen + openTagPattern.length;
+      } else {
+        depth--;
+        if (depth === 0) {
+          closeIdx = nextClose;
+          break;
+        }
+        tempIdx = nextClose + closeTagPattern.length;
+      }
+    }
+    
+    if (closeIdx === -1) {
+      return insertNewNestedSegments(innerXml, segments.slice(segIdx), newValue, type, baseIndent, indentStep);
+    }
+    
+    const tagContentStart = idx;
+    const tagContentEnd = closeIdx;
+    
+    if (isLeaf) {
+      const content = type === "cdata" ? `<![CDATA[${newValue}]]>` : newValue;
+      const updatedTag = innerXml.substring(openIdx, tagContentStart) + content + innerXml.substring(tagContentEnd, closeIdx + closeTagPattern.length);
+      return innerXml.substring(0, openIdx) + updatedTag + innerXml.substring(closeIdx + closeTagPattern.length);
+    } else {
+      const childInnerXml = innerXml.substring(tagContentStart, tagContentEnd);
+      const updatedChildInner = updateNestedSegments(
+        childInnerXml,
+        segments,
+        segIdx + 1,
+        newValue,
+        type,
+        baseIndent + indentStep,
+        indentStep
+      );
+      return innerXml.substring(0, tagContentStart) + updatedChildInner + innerXml.substring(tagContentEnd);
+    }
+  } else {
+    return insertNewNestedSegments(innerXml, segments.slice(segIdx), newValue, type, baseIndent, indentStep);
+  }
+}
+
+function insertNewNestedSegments(
+  innerXml: string,
+  segments: string[],
+  newValue: string,
+  type: "cdata" | "text",
+  baseIndent: string,
+  indentStep: string
+): string {
+  let block = "";
+  let currentIndent = baseIndent;
+  
+  for (let i = 0; i < segments.length; i++) {
+    const tag = segments[i];
+    block += `${currentIndent}<${tag}>`;
+    if (i === segments.length - 1) {
+      const content = type === "cdata" ? `<![CDATA[${newValue}]]>` : newValue;
+      block += `${content}</${tag}>`;
+    } else {
+      block += "\n";
+      currentIndent += indentStep;
+    }
+  }
+  
+  for (let i = segments.length - 2; i >= 0; i--) {
+    currentIndent = currentIndent.substring(0, currentIndent.length - indentStep.length);
+    block += `\n${currentIndent}</${segments[i]}>`;
+  }
+  
+  const trimmed = innerXml.trim();
+  if (trimmed.length === 0) {
+    return "\n" + block;
+  } else {
+    return innerXml.trimEnd() + "\n" + block;
+  }
+}
+
+function updateChildAttributeInXmlBlock(
+  innerXml: string,
+  segments: string[],
+  attrName: string,
+  newValue: string,
+  baseIndent: string,
+  indentStep: string
+): string {
+  const currentTag = segments[0];
+  
+  if (segments.length === 1) {
+    const openPattern = `<${currentTag}\\b`;
+    const openIdx = innerXml.search(new RegExp(openPattern, 'i'));
+    
+    if (openIdx !== -1) {
+      let idx = openIdx;
+      let foundEnd = false;
+      while (idx < innerXml.length) {
+        const char = innerXml[idx];
+        if (char === '"') {
+          idx = innerXml.indexOf('"', idx + 1);
+          if (idx === -1) idx = innerXml.length;
+        } else if (char === "'") {
+          idx = innerXml.indexOf("'", idx + 1);
+          if (idx === -1) idx = innerXml.length;
+        } else if (char === '>') {
+          foundEnd = true;
+          idx++;
+          break;
+        }
+        idx++;
+      }
+      
+      if (!foundEnd) return innerXml;
+      
+      const tagContent = innerXml.substring(openIdx, idx);
+      const escapedName = attrName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const attrRegex = new RegExp(`(\\b${escapedName}\\s*=\\s*)(["'])(.*?)\\2`, 'i');
+      
+      let newTagString = "";
+      if (attrRegex.test(tagContent)) {
+        newTagString = tagContent.replace(attrRegex, `$1$2${newValue}$2`);
+      } else {
+        const isSelfClosing = tagContent.trim().endsWith("/>");
+        const closingPattern = isSelfClosing ? /\s*\/>$/ : /\s*>$/;
+        const insertStr = ` ${attrName}="${newValue}"`;
+        newTagString = tagContent.replace(closingPattern, (match) => {
+          return insertStr + (match.trim() === "/>" ? " />" : ">");
+        });
+      }
+      
+      return innerXml.substring(0, openIdx) + newTagString + innerXml.substring(idx);
+    } else {
+      const tag = `${baseIndent}<${currentTag} ${attrName}="${newValue}"/>`;
+      const trimmed = innerXml.trim();
+      if (trimmed.length === 0) {
+        return "\n" + tag;
+      } else {
+        return innerXml.trimEnd() + "\n" + tag;
+      }
+    }
+  } else {
+    const openPattern = `<${currentTag}\\b`;
+    const openIdx = innerXml.search(new RegExp(openPattern, 'i'));
+    
+    if (openIdx !== -1) {
+      let depth = 1;
+      let idx = openIdx;
+      let foundOpeningEnd = false;
+      let isSelfClosing = false;
+      
+      while (idx < innerXml.length) {
+        const char = innerXml[idx];
+        if (char === '"') {
+          idx = innerXml.indexOf('"', idx + 1);
+          if (idx === -1) idx = innerXml.length;
+        } else if (char === "'") {
+          idx = innerXml.indexOf("'", idx + 1);
+          if (idx === -1) idx = innerXml.length;
+        } else if (char === '>') {
+          foundOpeningEnd = true;
+          isSelfClosing = innerXml.substring(Math.max(0, idx - 1), idx).startsWith("/");
+          idx++;
+          break;
+        }
+        idx++;
+      }
+      
+      if (!foundOpeningEnd) return innerXml;
+      
+      if (isSelfClosing) {
+        const tagHeader = innerXml.substring(openIdx, idx - 2);
+        const innerContent = updateChildAttributeInXmlBlock("", segments.slice(1), attrName, newValue, baseIndent + indentStep, indentStep);
+        const expanded = `${tagHeader}>\n${innerContent.trimStart()}\n${baseIndent}</${currentTag}>`;
+        return innerXml.substring(0, openIdx) + expanded + innerXml.substring(idx);
+      }
+      
+      const openTagPattern = `<${currentTag}`;
+      const closeTagPattern = `</${currentTag}>`;
+      let tempIdx = idx;
+      let closeIdx = -1;
+      
+      while (tempIdx < innerXml.length) {
+        const nextOpen = innerXml.indexOf(openTagPattern, tempIdx);
+        const nextClose = innerXml.indexOf(closeTagPattern, tempIdx);
+        if (nextOpen === -1 && nextClose === -1) break;
+        if (nextOpen !== -1 && (nextClose === -1 || nextOpen < nextClose)) {
+          depth++;
+          tempIdx = nextOpen + openTagPattern.length;
+        } else {
+          depth--;
+          if (depth === 0) {
+            closeIdx = nextClose;
+            break;
+          }
+          tempIdx = nextClose + closeTagPattern.length;
+        }
+      }
+      
+      if (closeIdx === -1) return innerXml;
+      
+      const tagContentStart = idx;
+      const tagContentEnd = closeIdx;
+      
+      const childInnerXml = innerXml.substring(tagContentStart, tagContentEnd);
+      const updatedChildInner = updateChildAttributeInXmlBlock(
+        childInnerXml,
+        segments.slice(1),
+        attrName,
+        newValue,
+        baseIndent + indentStep,
+        indentStep
+      );
+      
+      return innerXml.substring(0, tagContentStart) + updatedChildInner + innerXml.substring(tagContentEnd);
+    } else {
+      let block = `${baseIndent}<${currentTag}>`;
+      const innerContent = updateChildAttributeInXmlBlock("", segments.slice(1), attrName, newValue, baseIndent + indentStep, indentStep);
+      block += innerContent;
+      block += `\n${baseIndent}</${currentTag}>`;
+      
+      const trimmed = innerXml.trim();
+      if (trimmed.length === 0) {
+        return "\n" + block;
+      } else {
+        return innerXml.trimEnd() + "\n" + block;
+      }
+    }
+  }
+}
+
+function validateXmlBlock(tagName: string, block: string): boolean {
+  const openCount = (block.match(new RegExp(`<${tagName}\\b`, 'g')) || []).length;
+  const selfCloseCount = (block.match(new RegExp(`<${tagName}\\b[^>]*?\\/>`, 'g')) || []).length;
+  const closeCount = (block.match(new RegExp(`</${tagName}>`, 'g')) || []).length;
+  return openCount === (selfCloseCount + closeCount);
+}
+
+function updateChildElementInXml(
+  xmlText: string,
+  parentTag: string,
+  docId: string | undefined,
+  docName: string | undefined,
+  fieldDef: ChildFieldDef,
+  newValue: string,
+  lineNumber: number,
+  attributeName: string
+): string {
+  const bounds = findParentElementBounds(xmlText, parentTag, docId, docName, lineNumber);
+  if (!bounds) {
+    console.error(`[MuleViz] Parent element bounds not found for ${parentTag}`);
+    return xmlText;
+  }
+  
+  const parentBlock = xmlText.substring(bounds.startIdx, bounds.endIdx);
+  const parentLine = xmlText.substring(0, bounds.startIdx).split("\n").pop() || "";
+  const parentIndent = parentLine.match(/^([ \t]*)/)?.[1] || "";
+  
+  let indentStep = "    ";
+  let childIndent = parentIndent + indentStep;
+  const siblingIndentMatch = parentBlock.match(/\n([ \t]+)</);
+  if (siblingIndentMatch) {
+    childIndent = siblingIndentMatch[1];
+    if (childIndent.startsWith(parentIndent)) {
+      indentStep = childIndent.substring(parentIndent.length);
+    }
+  }
+
+  let openingEnd = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  while (openingEnd < parentBlock.length) {
+    const char = parentBlock[openingEnd];
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '>' && !inDoubleQuote && !inSingleQuote) {
+      openingEnd++;
+      break;
+    }
+    openingEnd++;
+  }
+
+  const isSelfClosing = parentBlock.substring(0, openingEnd).trim().endsWith("/>");
+  const closingStart = parentBlock.lastIndexOf(`</${parentTag}>`);
+  
+  let innerXml = "";
+  let tagHeader = parentBlock.substring(0, openingEnd);
+  
+  if (isSelfClosing) {
+    tagHeader = tagHeader.trim().replace(/\/?>$/, ">");
+  } else if (closingStart !== -1) {
+    innerXml = parentBlock.substring(openingEnd, closingStart);
+  } else {
+    tagHeader = tagHeader.trim().replace(/>$/, ">");
+  }
+
+  let updatedInnerXml = "";
+  if (fieldDef.type === "attrs") {
+    const dotIdx = attributeName.indexOf(".");
+    const pathKey = dotIdx !== -1 ? attributeName.substring(0, dotIdx) : fieldDef.key;
+    const attrName = dotIdx !== -1 ? attributeName.substring(dotIdx + 1) : "";
+    const pathSegments = pathKey.split(">");
+    updatedInnerXml = updateChildAttributeInXmlBlock(innerXml, pathSegments, attrName, newValue, childIndent, indentStep);
+  } else {
+    const pathSegments = fieldDef.key.split(">");
+    updatedInnerXml = updateNestedSegments(innerXml, pathSegments, 0, newValue, fieldDef.type, childIndent, indentStep);
+  }
+
+  let newBlock = tagHeader + updatedInnerXml;
+  if (isSelfClosing || closingStart === -1) {
+    newBlock += `\n${parentIndent}</${parentTag}>`;
+  } else {
+    newBlock += parentBlock.substring(closingStart);
+  }
+
+  if (!validateXmlBlock(parentTag, newBlock)) {
+    console.error(`[MuleViz] Writeback aborted — XML validation failed for ${parentTag}`);
+    return xmlText;
+  }
+
+  console.log(`[MuleViz] Writeback success: ${parentTag} field ${fieldDef.key} updated`);
+  return xmlText.substring(0, bounds.startIdx) + newBlock + xmlText.substring(bounds.endIdx);
+}
+
+async function sendConnectorCatalog(context: vscode.ExtensionContext): Promise<void> {
+  if (!panel) return;
+  
+  // PHASE 1: Group all TAG_META entries by namespace prefix (synchronous)
+  const allowedPrefixes = [
+    "http", "ee", "db", "jms", "vm", "ftp", "sftp",
+    "amqp", "file", "salesforce", "validation",
+    "crypto", "oauth2", "apikit", "scheduler"
+  ];
+  
+  const groups = new Map<string, Set<string>>();
+  groups.set("", new Set<string>()); // Mule Core
+  for (const p of allowedPrefixes) {
+    groups.set(p, new Set<string>());
+  }
+  
+  for (const tag of Object.keys(TAG_META)) {
+    let prefix = "";
+    let localName = tag;
+    if (tag.includes(":")) {
+      const parts = tag.split(":");
+      prefix = parts[0];
+      localName = parts[1];
+    }
+    
+    if (prefix === "https") {
+      prefix = "http";
+    }
+    
+    if (groups.has(prefix)) {
+      groups.get(prefix)!.add(localName);
+    }
+  }
+  
+  const catalog: { prefix: string; connector: string; operations: string[] }[] = [];
+  
+  // 0. Add Mule Structure (top-level structural elements)
+  catalog.push({
+    prefix: "",
+    connector: "Mule Structure",
+    operations: ["flow", "sub-flow", "error-handler", "on-error-propagate", "on-error-continue"],
+  });
+  
+  // 1. Add Mule Core
+  catalog.push({
+    prefix: "",
+    connector: "Mule Core",
+    operations: Array.from(groups.get("")!),
+  });
+  
+  // 2. Add other static groups
+  for (const prefix of allowedPrefixes) {
+    catalog.push({
+      prefix,
+      connector: `${prefix}-connector`,
+      operations: Array.from(groups.get(prefix)!),
+    });
+  }
+  
+  // Send static catalog immediately (instant)
   void panel.webview.postMessage({
     command: "connectorCatalog",
     catalog,
   });
+  
+  // PHASE 2 (async, enrichment only)
+  void (async () => {
+    try {
+      const pomDeps = await ensurePomDeps();
+      
+      for (const prefix of currentNamespaces.keys()) {
+        if (prefix === "mule" || prefix === "xsi" || prefix === "doc" || prefix === "") {
+          continue;
+        }
+        
+        const nsUri = currentNamespaces.get(prefix) ?? "";
+        const dep = matchDepToPrefix(prefix, nsUri, pomDeps);
+        if (!dep) {
+          continue; // No matching POM dep, skip JAR fetch
+        }
+        
+        // Fetch operations asynchronously
+        getConnectorOperations(
+          prefix,
+          currentNamespaces,
+          pomDeps,
+          context.globalStorageUri,
+          currentPomRepoUrls
+        ).then((ops) => {
+          if (panel && ops && ops.length > 0) {
+            const connectorName = dep.artifactId;
+            const opNames = ops.map(o => o.name);
+            
+            const existingIndex = catalog.findIndex(c => c.prefix === prefix);
+            if (existingIndex !== -1) {
+              catalog[existingIndex] = {
+                prefix,
+                connector: connectorName,
+                operations: opNames,
+              };
+            } else {
+              catalog.push({
+                prefix,
+                connector: connectorName,
+                operations: opNames,
+              });
+            }
+            
+            // Send updated catalog to the webview
+            void panel.webview.postMessage({
+              command: "connectorCatalog",
+              catalog: [...catalog],
+            });
+          }
+        }).catch((err) => {
+          console.warn(`[MuleViz] Silent failure fetching operations for prefix "${prefix}":`, err);
+        });
+      }
+    } catch (err) {
+      console.warn("[MuleViz] Phase 2 POM dependency resolution failed silently:", err);
+    }
+  })();
 }
 
 async function insertComponentInXml(
@@ -776,10 +1501,22 @@ async function insertComponentInXml(
     }
   }
   
+  // If anchor is a flow/sub-flow container, insert INSIDE it (after opening tag)
+  // not after the closing tag
+  const isFlowAnchor = insertAfterTagName === "flow" || insertAfterTagName === "sub-flow";
+  if (isFlowAnchor) {
+    // For empty flows, insert right after the opening <flow>...</flow> start tag
+    // currentLineIdx/charIdx already point to just past the > of the opening tag
+    endLineIdx = currentLineIdx;
+    endCharIdx = charIdx;
+  }
+  
   // Reconstruct insertion text with proper indent
   const startLineText = lines[lineIdx];
   const indentMatch = startLineText.match(/^([ \t]*)/);
-  const indent = indentMatch ? indentMatch[1] : "  ";
+  const baseIndent = indentMatch ? indentMatch[1] : "  ";
+  // If inserting inside a flow container, go one level deeper
+  const indent = isFlowAnchor ? baseIndent + "    " : baseIndent;
   
   let insertText = "";
   if (newTagName === "choice") {
@@ -865,4 +1602,170 @@ async function addPomDependency(
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to edit pom.xml: ${(err as Error).message}`);
   }
+}
+
+// ── Insert a new Flow or Sub-Flow ─────────────────────────────────────────────
+async function insertFlowInXml(
+  document: vscode.TextDocument,
+  kind: string,
+  name: string
+): Promise<boolean> {
+  const xmlText = document.getText();
+  const lines = xmlText.split("\n");
+
+  // Find existing flows to generate a unique name
+  const existingNames: string[] = [];
+  for (const line of lines) {
+    const m = line.match(/<(?:flow|sub-flow)\s[^>]*name="([^"]*)"/);
+    if (m) existingNames.push(m[1]);
+  }
+  let finalName = name;
+  let counter = 1;
+  while (existingNames.includes(finalName)) {
+    finalName = `${name}-${counter}`;
+    counter++;
+  }
+
+  // Find the closing </mule> tag
+  let muleCloseIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].includes("</mule>")) {
+      muleCloseIdx = i;
+      break;
+    }
+  }
+  if (muleCloseIdx === -1) {
+    console.error("[MuleViz] Cannot find </mule> closing tag");
+    return false;
+  }
+
+  // Detect indentation from existing flows
+  let indent = "    "; // default 4 spaces
+  for (const line of lines) {
+    const fm = line.match(/^(\s+)<(?:flow|sub-flow)\s/);
+    if (fm) {
+      indent = fm[1];
+      break;
+    }
+  }
+
+  const tag = kind === "sub-flow" ? "sub-flow" : "flow";
+  const docName = finalName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const insertText = `${indent}<${tag} name="${finalName}" doc:name="${docName}">\n${indent}</${tag}>\n`;
+
+  const insertPos = new vscode.Position(muleCloseIdx, 0);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(document.uri, insertPos, insertText);
+  return vscode.workspace.applyEdit(edit);
+}
+
+// ── Insert error-handler block into a flow ────────────────────────────────────
+async function insertErrorHandlerInXml(
+  document: vscode.TextDocument,
+  flowLineNumber: number,
+  flowName: string,
+  flowKind: string
+): Promise<boolean> {
+  const xmlText = document.getText();
+  const lines = xmlText.split("\n");
+
+  const tag = flowKind === "sub-flow" ? "sub-flow" : "flow";
+
+  // Find the closing </flow> or </sub-flow> for the target flow
+  const flowOpenIdx = flowLineNumber - 1;
+  let closeIdx = -1;
+  let depth = 0;
+
+  for (let i = flowOpenIdx; i < lines.length; i++) {
+    const line = lines[i];
+    // Count opening tags for this flow type
+    const openMatch = line.match(new RegExp(`<${tag}[\\s>]`));
+    const closeMatch = line.match(new RegExp(`</${tag}>`));
+    if (openMatch) depth++;
+    if (closeMatch) {
+      depth--;
+      if (depth === 0) {
+        closeIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (closeIdx === -1) {
+    console.error(`[MuleViz] Cannot find closing </${tag}> for flow at line ${flowLineNumber}`);
+    return false;
+  }
+
+  // Detect indentation
+  const flowLine = lines[flowOpenIdx];
+  const indentMatch = flowLine.match(/^(\s*)/);
+  const baseIndent = indentMatch ? indentMatch[1] : "";
+  const stepIndent = baseIndent + "    "; // one level deeper
+  const stratIndent = stepIndent + "    "; // two levels deeper
+
+  const insertText = `${stepIndent}<error-handler>\n` +
+    `${stratIndent}<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" type="ANY">\n` +
+    `${stratIndent}    <logger level="ERROR" doc:name="Log Error" message="Error: #[error.description]" />\n` +
+    `${stratIndent}</on-error-propagate>\n` +
+    `${stepIndent}</error-handler>\n`;
+
+  const insertPos = new vscode.Position(closeIdx, 0);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(document.uri, insertPos, insertText);
+  return vscode.workspace.applyEdit(edit);
+}
+
+// ── Insert error strategy into existing error-handler ─────────────────────────
+async function insertErrorStrategyInXml(
+  document: vscode.TextDocument,
+  flowLineNumber: number,
+  flowName: string,
+  strategyTag: string
+): Promise<boolean> {
+  const xmlText = document.getText();
+  const lines = xmlText.split("\n");
+
+  // Find the <error-handler> within this flow
+  const flowOpenIdx = flowLineNumber - 1;
+  let errorHandlerCloseIdx = -1;
+  let insideTargetFlow = false;
+  let flowDepth = 0;
+
+  // First, determine the flow's tag
+  const flowLine = lines[flowOpenIdx];
+  const flowTagMatch = flowLine.match(/<(flow|sub-flow)[\s>]/);
+  const flowTag = flowTagMatch ? flowTagMatch[1] : "flow";
+
+  for (let i = flowOpenIdx; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(new RegExp(`<${flowTag}[\\s>]`))) flowDepth++;
+    if (line.match(new RegExp(`</${flowTag}>`))) {
+      flowDepth--;
+      if (flowDepth === 0) break; // exited the flow
+    }
+    if (line.includes("</error-handler>") && flowDepth === 1) {
+      errorHandlerCloseIdx = i;
+      break;
+    }
+  }
+
+  if (errorHandlerCloseIdx === -1) {
+    console.error(`[MuleViz] Cannot find </error-handler> within flow at line ${flowLineNumber}`);
+    return false;
+  }
+
+  // Detect indentation from the </error-handler> line
+  const ehCloseLine = lines[errorHandlerCloseIdx];
+  const ehIndentMatch = ehCloseLine.match(/^(\s*)/);
+  const ehIndent = ehIndentMatch ? ehIndentMatch[1] : "";
+  const stratIndent = ehIndent + "    ";
+
+  const labelParts = strategyTag.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const insertText = `${stratIndent}<${strategyTag} enableNotifications="true" logException="true" doc:name="${labelParts}" type="ANY">\n` +
+    `${stratIndent}</${strategyTag}>\n`;
+
+  const insertPos = new vscode.Position(errorHandlerCloseIdx, 0);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(document.uri, insertPos, insertText);
+  return vscode.workspace.applyEdit(edit);
 }
