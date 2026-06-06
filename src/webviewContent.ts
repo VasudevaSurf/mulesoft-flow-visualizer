@@ -123,12 +123,31 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden;
 #canvas-row{display:flex;flex:1;overflow:hidden;min-height:0}
 
 /* ── SIDEBAR ── */
-#sidebar{width:210px;min-width:130px;background:var(--vscode-sideBar-background,#252526);
+#sidebar{
+  width:210px;min-width:130px;
+  background:var(--vscode-sideBar-background,#252526);
   border-right:1px solid var(--vscode-panel-border,#3c3c3c);
-  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;height:100%;min-height:0}
-#palette-sidebar{width:210px;min-width:130px;background:var(--vscode-sideBar-background,#252526);
+  flex-shrink:0;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  align-self:stretch;
+}
+#palette-sidebar{
+  width:210px;min-width:130px;
+  background:var(--vscode-sideBar-background,#252526);
   border-left:1px solid var(--vscode-panel-border,#3c3c3c);
-  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;height:100%;min-height:0}
+  flex-shrink:0;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  align-self:stretch;
+}
+#palette-body::-webkit-scrollbar{width:6px;}
+#palette-body::-webkit-scrollbar-track{background:transparent;}
+#palette-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:3px;}
+#palette-body::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.3);}
+#fl::-webkit-scrollbar{width:4px;}
+#fl::-webkit-scrollbar-track{background:transparent;}
+#fl::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px;}
 #sh{padding:7px 9px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
   color:var(--vscode-sideBarSectionHeader-foreground,#bbb);
   background:var(--vscode-sideBarSectionHeader-background,#2d2d2d);
@@ -340,18 +359,18 @@ ${warningBanner}
 <div id="main">
   <div id="canvas-row">
     <div id="sidebar">
-      <div class="sidebar-sec" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 80px;">
+      <div class="sidebar-sec">
         <div id="sh">Flows &amp; Sub-Flows</div>
-        <ul id="fl" style="min-height: 0;">${flowListItems || '<li style="padding:10px;color:#888;font-size:11px">No flows found</li>'}</ul>
+        <ul id="fl" style="list-style:none;">${flowListItems || '<li style="padding:10px;color:#888;font-size:11px">No flows found</li>'}</ul>
         <div id="sf">${flows.length} flow${flows.length !== 1 ? "s" : ""} detected</div>
       </div>
-      <div class="sidebar-sec" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 80px; border-top: 1px solid var(--vscode-panel-border,#3c3c3c);">
+      <div class="sidebar-sec" style="min-height: 80px; border-top: 1px solid var(--vscode-panel-border,#3c3c3c);">
         <div id="exchange-hdr" style="padding:7px 9px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--vscode-sideBarSectionHeader-foreground,#bbb);background:var(--vscode-sideBarSectionHeader-background,#2d2d2d);border-bottom:1px solid var(--vscode-panel-border,#3c3c3c)">Search Exchange</div>
         <div id="exchange-search-container" style="padding: 6px 9px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 4px;">
           <input type="text" id="exchange-search" placeholder="Search Exchange..." style="flex: 1; padding:3px 6px; font-size:10px; background:var(--vscode-input-background,#1e1e1e); color:var(--vscode-input-foreground,#ccc); border:1px solid var(--vscode-input-border,#3c3c3c); border-radius:2px; outline:none;" />
           <button id="exchange-btn" class="tbtn" style="padding: 2px 6px;">Go</button>
         </div>
-        <div id="exchange-body" style="flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0;">
+        <div id="exchange-body" style="padding:4px 0;">
           <div style="padding: 10px 12px; color: #666; font-style: italic;">Enter query to search connectors...</div>
         </div>
       </div>
@@ -374,7 +393,7 @@ ${warningBanner}
       <div id="palette-search-container" style="padding: 6px 9px; border-bottom: 1px solid rgba(255,255,255,0.05);">
         <input type="text" id="palette-search" placeholder="Filter operations..." style="width:100%; padding:3px 6px; font-size:10px; background:var(--vscode-input-background,#1e1e1e); color:var(--vscode-input-foreground,#ccc); border:1px solid var(--vscode-input-border,#3c3c3c); border-radius:2px; outline:none;" />
       </div>
-      <div id="palette-body" style="flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0;">
+      <div id="palette-body" style="padding:4px 0;">
         <div class="palette-loading" style="padding: 10px 12px; color: #888; font-style: italic;">Loading operations...</div>
       </div>
     </div>
@@ -425,6 +444,48 @@ try {
   FLOWS = [];
 }
 var vscode = acquireVsCodeApi();
+
+// Force palette body to be scrollable by setting its height explicitly in JS
+function fixSidebarHeights() {
+  const palSidebar = document.getElementById('palette-sidebar');
+  const palHdr = document.getElementById('palette-hdr');
+  const palSearch = document.getElementById('palette-search-container');
+  const palBody = document.getElementById('palette-body');
+  if (palSidebar && palHdr && palSearch && palBody) {
+    const totalH = palSidebar.offsetHeight;
+    const usedH = palHdr.offsetHeight + palSearch.offsetHeight;
+    palBody.style.height = Math.max(0, totalH - usedH) + 'px';
+    palBody.style.overflowY = 'auto';
+    palBody.style.flex = 'none';
+  }
+
+  const sidebar = document.getElementById('sidebar');
+  const flList = document.getElementById('fl');
+  const shHdr = document.getElementById('sh');
+  const sfFooter = document.getElementById('sf');
+  if (sidebar && flList && shHdr && sfFooter) {
+    // Left sidebar: flows section gets half, exchange section gets half
+    const sideH = sidebar.offsetHeight;
+    const halfH = Math.floor(sideH / 2);
+    const flowsUsed = shHdr.offsetHeight + sfFooter.offsetHeight;
+    flList.style.height = Math.max(0, halfH - flowsUsed) + 'px';
+    flList.style.overflowY = 'auto';
+    flList.style.flex = 'none';
+
+    const exchHdr = document.getElementById('exchange-hdr');
+    const exchSearch = document.getElementById('exchange-search-container');
+    const exchBody = document.getElementById('exchange-body');
+    if (exchHdr && exchSearch && exchBody) {
+      const exchUsed = exchHdr.offsetHeight + exchSearch.offsetHeight;
+      exchBody.style.height = Math.max(0, halfH - exchUsed) + 'px';
+      exchBody.style.overflowY = 'auto';
+      exchBody.style.flex = 'none';
+    }
+  }
+}
+
+// Run on load
+setTimeout(fixSidebarHeights, 50);
 
 const collapsedFlows = new Set();
 const collapsedPaletteGroups = new Set();
@@ -1514,7 +1575,8 @@ try { render(); } catch(e) {
   d.textContent = 'render() crashed: ' + (e.stack || e.message || e);
   c.appendChild(d);
 }
-window.addEventListener('resize',fitToWindow);
+window.addEventListener('resize', () => { fitToWindow(); fixSidebarHeights(); });
+fixSidebarHeights();
 
 })();
 </script>
