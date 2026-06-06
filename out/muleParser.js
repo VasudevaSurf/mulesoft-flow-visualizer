@@ -147,17 +147,21 @@ const SKIP_TAGS = new Set([
     "ee:message",
     "when",
     "otherwise",
-    "configuration",
-    "http:listener-config",
-    "http:request-config",
-    "db:config",
-    "jms:config",
-    "file:config",
-    "ftp:config",
-    "sftp:config",
-    "salesforce:sfdc-config",
-    "ee:transform", // handled separately — don't double-count children
+    "route",
     "doc:documentation",
+]);
+const RECURSIVE_TAGS = new Set([
+    "choice",
+    "foreach",
+    "scatter-gather",
+    "try",
+    "async",
+    "first-successful",
+    "round-robin",
+    "until-successful",
+    "when",
+    "otherwise",
+    "route",
 ]);
 /**
  * Recursively walk the parsed XML object and flatten nested child elements
@@ -275,6 +279,30 @@ function tagToStep(tagName, attrs, flowId, index) {
         rawAttrs,
     };
 }
+function buildTagOccurrenceList(xml) {
+    const occurrences = [];
+    const lines = xml.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const lineText = lines[i];
+        const regex = /<([a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+)\b([^>]*)/g;
+        let match;
+        while ((match = regex.exec(lineText)) !== null) {
+            const tagName = match[1];
+            const attrsText = match[2];
+            if (tagName.startsWith('!') || tagName.startsWith('?'))
+                continue;
+            const docNameMatch = attrsText.match(/doc:name\s*=\s*["']([^"']+)["']/);
+            const nameMatch = attrsText.match(/\bname\s*=\s*["']([^"']+)["']/);
+            occurrences.push({
+                tagName,
+                lineNumber: i + 1,
+                docName: docNameMatch ? docNameMatch[1] : undefined,
+                name: nameMatch ? nameMatch[1] : undefined,
+            });
+        }
+    }
+    return occurrences;
+}
 // ─── Line-number tracking ──────────────────────────────────────────────────────
 /**
  * Scan the raw XML text and return a map of { tagName+name → 1-based line }.
@@ -303,27 +331,66 @@ function buildLineMap(xml) {
  * We intentionally stay shallow (depth 1) to keep the diagram readable;
  * nested containers (choice, foreach, etc.) appear as a single diamond node.
  */
-function extractSteps(node, flowId, counter) {
+function extractSteps(node, flowId, counter, occurrences, flowStartLine, lastMatchIndex) {
     const steps = [];
-    for (const [key, value] of Object.entries(node)) {
-        // Skip attribute keys and metadata
-        if (key.startsWith("@_") || key === "#text" || key === ":@") {
-            continue;
-        }
-        if (SKIP_TAGS.has(key)) {
-            continue;
-        }
-        // value may be a single object or an array (fast-xml-parser isArray option)
-        const items = Array.isArray(value) ? value : [value];
-        for (const item of items) {
-            if (item === null || item === undefined) {
+    function walk(n) {
+        if (!n || typeof n !== "object")
+            return;
+        for (const [key, value] of Object.entries(n)) {
+            if (key.startsWith("@_") || key === "#text" || key === ":@") {
                 continue;
             }
-            const attrs = typeof item === "object" && item !== null ? item : {};
-            const step = tagToStep(key, attrs, flowId, counter.value++);
-            steps.push(step);
+            // If it's a global config, skip it entirely (do not add, do not recurse)
+            if (key.endsWith("-config") || key.endsWith("config") || key === "configuration") {
+                continue;
+            }
+            // If it's a structural container we want to ignore (like error-handler, doc info, etc.)
+            if (key === "error-handler" || key === "doc:documentation") {
+                continue;
+            }
+            const items = Array.isArray(value) ? value : [value];
+            for (const item of items) {
+                if (!item || typeof item !== "object")
+                    continue;
+                // Check if this tag represents a step we should display
+                const shouldShow = !SKIP_TAGS.has(key);
+                if (shouldShow) {
+                    // Find matching tag occurrence to get the line number
+                    let matchedLine = flowStartLine;
+                    const docName = item["@_doc:name"];
+                    const name = item["@_name"];
+                    for (let i = lastMatchIndex.value; i < occurrences.length; i++) {
+                        const occ = occurrences[i];
+                        if (occ.lineNumber >= flowStartLine && occ.tagName === key) {
+                            if (docName && occ.docName !== docName)
+                                continue;
+                            if (name && occ.name !== name)
+                                continue;
+                            matchedLine = occ.lineNumber;
+                            lastMatchIndex.value = i + 1;
+                            break;
+                        }
+                    }
+                    const step = tagToStep(key, item, flowId, counter.value++);
+                    step.lineNumber = matchedLine;
+                    steps.push(step);
+                }
+                // Recurse ONLY if it's a recursive structural element (like choice, foreach, when, etc.)
+                if (RECURSIVE_TAGS.has(key)) {
+                    let matchedLine = flowStartLine;
+                    for (let i = lastMatchIndex.value; i < occurrences.length; i++) {
+                        const occ = occurrences[i];
+                        if (occ.lineNumber >= flowStartLine && occ.tagName === key) {
+                            lastMatchIndex.value = i + 1;
+                            break;
+                        }
+                    }
+                    walk(item);
+                }
+            }
         }
     }
+    walk(node);
     return steps;
 }
 // ─── Main parser ───────────────────────────────────────────────────────────────
@@ -383,8 +450,9 @@ function parseMuleXml(xmlText) {
         warnings.push("No <mule> root element found. Is this a valid Mule XML file?");
         return { flows, warnings };
     }
-    // ── 3. Build line-number map ──────────────────────────────────────────────
+    // ── 3. Build line-number and occurrences maps ──────────────────────────────
     const lineMap = buildLineMap(xmlText);
+    const occurrences = buildTagOccurrenceList(xmlText);
     // ── 4. Collect flows & sub-flows ──────────────────────────────────────────
     const flowElements = muleRoot["flow"] || [];
     const subFlowElements = muleRoot["sub-flow"] || [];
@@ -402,7 +470,8 @@ function parseMuleXml(xmlText) {
             const lineNumber = lineMap.get(lineKey) ?? 1;
             const subgraphId = toNodeId(`${kind}_${name}`);
             const counter = { value: 0 };
-            const steps = extractSteps(elem, subgraphId, counter);
+            const lastMatchIndex = { value: 0 };
+            const steps = extractSteps(elem, subgraphId, counter, occurrences, lineNumber, lastMatchIndex);
             // ── Extract inline <error-handler> nested inside this flow ──────────
             let errorHandler;
             if (kind === "flow" || kind === "sub-flow") {
@@ -434,7 +503,8 @@ function parseMuleXml(xmlText) {
                                     .replace(/-/g, " ")
                                     .replace(/\b\w/g, (c) => c.toUpperCase()));
                             const stratCounter = { value: counter.value };
-                            const stratSteps = extractSteps(stratElem, `${subgraphId}_err`, stratCounter);
+                            const stratLastMatch = { value: 0 };
+                            const stratSteps = extractSteps(stratElem, `${subgraphId}_err`, stratCounter, occurrences, lineNumber, stratLastMatch);
                             counter.value = stratCounter.value;
                             errorHandler.push({
                                 type: stratType,

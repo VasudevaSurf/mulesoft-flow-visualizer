@@ -26,6 +26,8 @@ export interface FlowStep {
      * Values are always strings.
      */
     rawAttrs: Record<string, string>;
+    /** 1-based line number of the tag inside the XML document */
+    lineNumber?: number;
 }
 /** One complete flow/sub-flow/error-handler block */
 export interface ParsedFlow {
