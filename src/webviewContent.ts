@@ -1,39 +1,28 @@
 /**
  * webviewContent.ts
  *
- * Factory that produces the complete HTML document injected into the
- * VS Code WebviewPanel. It:
- *   - Loads Mermaid.js from a CDN (the webview nonce allows this)
- *   - Renders the supplied Mermaid diagram string
- *   - Handles click events on diagram nodes and posts them back to the extension
- *   - Provides a toolbar with zoom controls and a refresh button
- *   - Adapts to the VS Code colour theme automatically
+ * Custom SVG renderer matching Anypoint Studio layout:
+ * - Flows stacked vertically; nodes left-to-right
+ * - Error-handler section docked below parent flow
+ * - Pan: drag OR plain scroll  |  Zoom: Ctrl+scroll / toolbar / keyboard
+ * - Properties panel (bottom slide-up) on node click — shows real XML attrs
+ *   with a rich connector schema registry (auto-discovered, not hardcoded per-field)
  */
 
 import * as vscode from "vscode";
 import { ParsedFlow } from "./muleParser";
 
 export interface WebviewContentOptions {
-  /** The Mermaid diagram source string */
   mermaidSrc: string;
-  /** Parsed flows — used to build the click→line-number mapping */
   flows: ParsedFlow[];
-  /** Security nonce for inline scripts */
   nonce: string;
-  /** Webview-safe URI for any bundled local assets (unused here but good practice) */
   webview: vscode.Webview;
-  /** Non-fatal warnings from the parser */
   warnings: string[];
-  /** Mermaid theme name */
   theme: string;
 }
 
-/**
- * Generate a cryptographically random nonce for Content-Security-Policy.
- */
 export function getNonce(): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
   for (let i = 0; i < 32; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -41,693 +30,1243 @@ export function getNonce(): string {
   return result;
 }
 
-/**
- * Build the flow → lineNumber JSON map that is embedded in the page so
- * click handlers can resolve a subgraph ID back to a source line.
- */
-function buildFlowLineMap(flows: ParsedFlow[]): string {
-  const map: Record<string, number> = {};
-  for (const flow of flows) {
-    map[flow.subgraphId] = flow.lineNumber;
-    map[flow.name] = flow.lineNumber;
-    // Also map individual step node IDs back to the flow's line
-    for (const step of flow.steps) {
-      map[step.nodeId] = flow.lineNumber;
-      if (step.flowRefTarget) {
-        map[`ref_${step.nodeId}`] = flow.lineNumber;
-      }
-    }
-  }
-  return JSON.stringify(map);
-}
-
-/**
- * Produce the complete HTML string for the WebviewPanel.
- */
-export function getWebviewContent(opts: WebviewContentOptions): string {
-  const { mermaidSrc, flows, nonce, warnings, theme } = opts;
-
-  const flowLineMap = buildFlowLineMap(flows);
-
-  // Build a human-readable flow index for the sidebar
-  const flowListItems = flows
-    .map((f) => {
-      const icon =
-        f.kind === "flow" ? "🔵" : f.kind === "sub-flow" ? "🟡" : "🔴";
-      const kindLabel =
-        f.kind === "flow"
-          ? "Flow"
-          : f.kind === "sub-flow"
-          ? "Sub-Flow"
-          : "Error Handler";
-      return `<li class="flow-item" data-line="${f.lineNumber}" data-subgraph="${f.subgraphId}" title="Click to jump to line ${f.lineNumber}">
-        <span class="flow-icon">${icon}</span>
-        <span class="flow-kind">${kindLabel}</span>
-        <span class="flow-name">${escapeHtml(f.name)}</span>
-        <span class="flow-steps">${f.steps.length} step${f.steps.length !== 1 ? "s" : ""}</span>
-      </li>`;
-    })
-    .join("\n");
-
-  const warningBanner =
-    warnings.length > 0
-      ? `<div class="warning-banner">
-          <span class="warning-icon">⚠️</span>
-          <ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>
-        </div>`
-      : "";
-
-  // Escape the Mermaid source for safe injection into a JS template literal
-  const escapedMermaidSrc = mermaidSrc
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\$/g, "\\$");
-
-  return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <!--
-    Content-Security-Policy:
-      - script-src: nonce for inline scripts + cdn.jsdelivr.net for Mermaid
-      - style-src: nonce for inline styles + 'unsafe-inline' needed by Mermaid itself
-  -->
-  <meta
-    http-equiv="Content-Security-Policy"
-    content="
-      default-src 'none';
-      script-src 'nonce-${nonce}' https://cdn.jsdelivr.net;
-      style-src 'nonce-${nonce}' 'unsafe-inline';
-      img-src data: https:;
-      font-src https://cdn.jsdelivr.net;
-    "
-  />
-
-  <title>MuleSoft Multi-Flow Visualizer</title>
-
-  <style nonce="${nonce}">
-    /* ── Reset & base ─────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      overflow: hidden;
-      font-family: var(--vscode-font-family, sans-serif);
-      font-size: var(--vscode-font-size, 13px);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
-    }
-
-    /* ── Toolbar ──────────────────────────────────────────────────────── */
-    #toolbar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      background: var(--vscode-tab-activeBackground, #1e1e1e);
-      border-bottom: 1px solid var(--vscode-panel-border, #333);
-      flex-shrink: 0;
-      user-select: none;
-    }
-
-    #toolbar h1 {
-      font-size: 13px;
-      font-weight: 600;
-      flex: 1;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      color: var(--vscode-titleBar-activeForeground, #ccc);
-    }
-
-    .toolbar-btn {
-      background: var(--vscode-button-secondaryBackground, #3c3c3c);
-      color: var(--vscode-button-secondaryForeground, #ccc);
-      border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 3px;
-      padding: 3px 8px;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1.4;
-      transition: background 0.1s;
-    }
-    .toolbar-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground, #505050);
-    }
-
-    #zoom-level {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground, #999);
-      min-width: 38px;
-      text-align: center;
-    }
-
-    /* ── Warning banner ───────────────────────────────────────────────── */
-    .warning-banner {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 6px 12px;
-      background: var(--vscode-inputValidation-warningBackground, #452a00);
-      border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
-      font-size: 11px;
-      flex-shrink: 0;
-    }
-    .warning-banner ul { list-style: none; }
-    .warning-icon { font-size: 14px; line-height: 1; }
-
-    /* ── Main layout ──────────────────────────────────────────────────── */
-    #main {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    /* ── Sidebar ──────────────────────────────────────────────────────── */
-    #sidebar {
-      width: 220px;
-      min-width: 140px;
-      max-width: 340px;
-      background: var(--vscode-sideBar-background, #252526);
-      border-right: 1px solid var(--vscode-panel-border, #333);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      flex-shrink: 0;
-      resize: horizontal; /* Browser-native horizontal resize */
-    }
-
-    #sidebar-header {
-      padding: 8px 10px;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--vscode-sideBarSectionHeader-foreground, #bbb);
-      background: var(--vscode-sideBarSectionHeader-background, #2d2d2d);
-      border-bottom: 1px solid var(--vscode-panel-border, #333);
-      user-select: none;
-    }
-
-    #flow-list {
-      list-style: none;
-      overflow-y: auto;
-      flex: 1;
-    }
-
-    .flow-item {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 5px 10px;
-      cursor: pointer;
-      border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
-      transition: background 0.1s;
-      font-size: 12px;
-    }
-    .flow-item:hover {
-      background: var(--vscode-list-hoverBackground, #2a2d2e);
-    }
-    .flow-item.active {
-      background: var(--vscode-list-activeSelectionBackground, #094771);
-      color: var(--vscode-list-activeSelectionForeground, #fff);
-    }
-    .flow-icon { font-size: 10px; flex-shrink: 0; }
-    .flow-kind {
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground, #999);
-      flex-shrink: 0;
-    }
-    .flow-name {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-weight: 500;
-    }
-    .flow-steps {
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground, #888);
-      flex-shrink: 0;
-    }
-
-    #sidebar-footer {
-      padding: 6px 10px;
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground, #888);
-      border-top: 1px solid var(--vscode-panel-border, #333);
-      user-select: none;
-    }
-
-    /* ── Canvas area ──────────────────────────────────────────────────── */
-    #canvas-wrapper {
-      flex: 1;
-      overflow: auto;
-      position: relative;
-      cursor: grab;
-    }
-    #canvas-wrapper:active { cursor: grabbing; }
-
-    #canvas-inner {
-      display: inline-block;
-      min-width: 100%;
-      min-height: 100%;
-      padding: 24px;
-      transform-origin: top left;
-    }
-
-    /* ── Mermaid overrides ────────────────────────────────────────────── */
-    .mermaid {
-      display: block;
-      text-align: left;
-    }
-
-    /* Make subgraph labels stand out */
-    .mermaid .cluster-label text {
-      font-weight: 700 !important;
-      font-size: 14px !important;
-    }
-
-    /* Node hover highlight */
-    .mermaid .node rect,
-    .mermaid .node circle,
-    .mermaid .node ellipse,
-    .mermaid .node polygon,
-    .mermaid .node path {
-      cursor: pointer;
-      transition: filter 0.15s;
-    }
-    .mermaid .node:hover rect,
-    .mermaid .node:hover circle,
-    .mermaid .node:hover ellipse,
-    .mermaid .node:hover polygon {
-      filter: brightness(1.25);
-    }
-
-    /* ── Loading / error states ───────────────────────────────────────── */
-    #loading {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--vscode-editor-background);
-      z-index: 10;
-      font-size: 13px;
-      color: var(--vscode-descriptionForeground, #999);
-      gap: 10px;
-    }
-    .spinner {
-      width: 20px; height: 20px;
-      border: 2px solid var(--vscode-descriptionForeground, #666);
-      border-top-color: var(--vscode-focusBorder, #007acc);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    #error-display {
-      display: none;
-      padding: 20px;
-      color: var(--vscode-errorForeground, #f48771);
-      font-size: 12px;
-    }
-    #error-display pre {
-      margin-top: 8px;
-      padding: 8px;
-      background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-      border-radius: 4px;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    /* ── Tooltip ──────────────────────────────────────────────────────── */
-    #tooltip {
-      position: fixed;
-      background: var(--vscode-editorHoverWidget-background, #252526);
-      border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
-      color: var(--vscode-editorHoverWidget-foreground, #d4d4d4);
-      padding: 4px 8px;
-      border-radius: 3px;
-      font-size: 11px;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.15s;
-      z-index: 100;
-      max-width: 260px;
-    }
-    #tooltip.visible { opacity: 1; }
-  </style>
-</head>
-
-<body>
-  <!-- ── Toolbar ───────────────────────────────────────────────────────── -->
-  <div id="toolbar">
-    <h1>🔀 MuleSoft Multi-Flow Visualizer</h1>
-    <button class="toolbar-btn" id="btn-zoom-out" title="Zoom out (-)">－</button>
-    <span id="zoom-level">100%</span>
-    <button class="toolbar-btn" id="btn-zoom-in" title="Zoom in (+)">＋</button>
-    <button class="toolbar-btn" id="btn-zoom-fit" title="Fit to window">⊡ Fit</button>
-    <button class="toolbar-btn" id="btn-refresh" title="Refresh diagram">↻ Refresh</button>
-    <button class="toolbar-btn" id="btn-export" title="Export as SVG">⬇ SVG</button>
-  </div>
-
-  ${warningBanner}
-
-  <!-- ── Main split layout ─────────────────────────────────────────────── -->
-  <div id="main">
-
-    <!-- Sidebar: flow index -->
-    <div id="sidebar">
-      <div id="sidebar-header">Flows &amp; Sub-Flows</div>
-      <ul id="flow-list">
-        ${flowListItems || '<li style="padding:10px;color:#888;font-size:11px;">No flows found</li>'}
-      </ul>
-      <div id="sidebar-footer" id="flow-count">
-        ${flows.length} flow${flows.length !== 1 ? "s" : ""} detected
-      </div>
-    </div>
-
-    <!-- Canvas: Mermaid diagram -->
-    <div id="canvas-wrapper">
-      <div id="canvas-inner">
-        <div id="loading">
-          <div class="spinner"></div>
-          Rendering diagram…
-        </div>
-        <div id="error-display"></div>
-        <!-- Mermaid renders into this element -->
-        <div class="mermaid" id="mermaid-container"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tooltip overlay -->
-  <div id="tooltip"></div>
-
-  <!-- ── Mermaid.js from CDN ────────────────────────────────────────────── -->
-  <script
-    nonce="${nonce}"
-    src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
-  ></script>
-
-  <script nonce="${nonce}">
-    // ── Constants injected from extension ──────────────────────────────────
-    const MERMAID_SRC   = \`${escapedMermaidSrc}\`;
-    const FLOW_LINE_MAP = ${flowLineMap};
-    const MERMAID_THEME = "${theme}";
-
-    // ── VS Code API ────────────────────────────────────────────────────────
-    const vscode = acquireVsCodeApi();
-
-    // ── State ──────────────────────────────────────────────────────────────
-    let currentZoom = 1.0;
-    const ZOOM_STEP  = 0.15;
-    const ZOOM_MIN   = 0.2;
-    const ZOOM_MAX   = 3.0;
-
-    const canvasInner   = document.getElementById('canvas-inner');
-    const canvasWrapper = document.getElementById('canvas-wrapper');
-    const zoomLabel     = document.getElementById('zoom-level');
-    const loadingEl     = document.getElementById('loading');
-    const errorEl       = document.getElementById('error-display');
-    const mermaidEl     = document.getElementById('mermaid-container');
-    const tooltip       = document.getElementById('tooltip');
-
-    // ── Zoom helpers ───────────────────────────────────────────────────────
-    function applyZoom(z) {
-      currentZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-      canvasInner.style.transform = \`scale(\${currentZoom})\`;
-      // Adjust the wrapper's scroll area to match scaled content
-      canvasInner.style.width  = \`\${100 / currentZoom}%\`;
-      canvasInner.style.height = \`\${100 / currentZoom}%\`;
-      zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
-    }
-
-    function fitToWindow() {
-      const svg = mermaidEl.querySelector('svg');
-      if (!svg) { return; }
-      const svgW = svg.getBBox ? svg.getBBox().width  : svg.viewBox.baseVal.width;
-      const svgH = svg.getBBox ? svg.getBBox().height : svg.viewBox.baseVal.height;
-      if (!svgW || !svgH) { return; }
-      const availW = canvasWrapper.clientWidth  - 48;
-      const availH = canvasWrapper.clientHeight - 48;
-      const scale  = Math.min(availW / svgW, availH / svgH, 1);
-      applyZoom(scale);
-    }
-
-    // ── Toolbar buttons ────────────────────────────────────────────────────
-    document.getElementById('btn-zoom-in').addEventListener('click',
-      () => applyZoom(currentZoom + ZOOM_STEP));
-    document.getElementById('btn-zoom-out').addEventListener('click',
-      () => applyZoom(currentZoom - ZOOM_STEP));
-    document.getElementById('btn-zoom-fit').addEventListener('click', fitToWindow);
-    document.getElementById('btn-refresh').addEventListener('click', () => {
-      vscode.postMessage({ command: 'refresh' });
-    });
-
-    // ── SVG Export ────────────────────────────────────────────────────────
-    document.getElementById('btn-export').addEventListener('click', () => {
-      const svg = mermaidEl.querySelector('svg');
-      if (!svg) { return; }
-      const serializer = new XMLSerializer();
-      const svgStr = serializer.serializeToString(svg);
-      const blob = new Blob([svgStr], { type: 'image/svg+xml' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = 'mule-flows.svg';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    });
-
-    // ── Keyboard zoom shortcuts ────────────────────────────────────────────
-    document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === '=') { e.preventDefault(); applyZoom(currentZoom + ZOOM_STEP); }
-      if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); applyZoom(currentZoom - ZOOM_STEP); }
-      if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); fitToWindow(); }
-    });
-
-    // ── Wheel zoom ────────────────────────────────────────────────────────
-    canvasWrapper.addEventListener('wheel', (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        applyZoom(currentZoom - e.deltaY * 0.001);
-      }
-    }, { passive: false });
-
-    // ── Pan (drag to scroll) ───────────────────────────────────────────────
-    let isPanning = false;
-    let panStart  = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
-
-    canvasWrapper.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) { return; }
-      // Only pan if not clicking a Mermaid node
-      if (e.target.closest('.node, .edgeLabel, .cluster')) { return; }
-      isPanning = true;
-      panStart  = {
-        x: e.clientX, y: e.clientY,
-        scrollLeft: canvasWrapper.scrollLeft,
-        scrollTop:  canvasWrapper.scrollTop,
-      };
-      canvasWrapper.style.cursor = 'grabbing';
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!isPanning) { return; }
-      canvasWrapper.scrollLeft = panStart.scrollLeft - (e.clientX - panStart.x);
-      canvasWrapper.scrollTop  = panStart.scrollTop  - (e.clientY - panStart.y);
-    });
-
-    window.addEventListener('mouseup', () => {
-      isPanning = false;
-      canvasWrapper.style.cursor = 'grab';
-    });
-
-    // ── Click handler: resolve node → line number → post to extension ──────
-    function handleDiagramClick(e) {
-      const nodeEl = e.target.closest('.node');
-      if (!nodeEl) {
-        // Check if the click was on a subgraph label / cluster
-        const clusterEl = e.target.closest('.cluster');
-        if (clusterEl) {
-          handleClusterClick(clusterEl);
-        }
-        return;
-      }
-      handleNodeClick(nodeEl);
-    }
-
-    function handleNodeClick(nodeEl) {
-      // Mermaid adds the node id as a class like "flowchart-XYZ-N"
-      // We need to extract our custom id from the element's id or class
-      const nodeId = extractMermaidNodeId(nodeEl);
-      if (!nodeId) { return; }
-
-      const line = FLOW_LINE_MAP[nodeId];
-      if (line !== undefined) {
-        highlightSidebarItem(null, line);
-        vscode.postMessage({ command: 'jumpToLine', line });
-      }
-    }
-
-    function handleClusterClick(clusterEl) {
-      // Extract subgraph id from the cluster element
-      const id = clusterEl.id || '';
-      // Mermaid wraps subgraphs with id like "flowchart-SUBGRAPH_ID-N"
-      const match = id.match(/flowchart-(.+?)-\\d+$/);
-      const subgraphId = match ? match[1] : id;
-
-      const line = FLOW_LINE_MAP[subgraphId];
-      if (line !== undefined) {
-        highlightSidebarItem(subgraphId, line);
-        vscode.postMessage({ command: 'jumpToLine', line });
-      }
-    }
-
-    function extractMermaidNodeId(nodeEl) {
-      // Mermaid v10 sets id="flowchart-<nodeId>-<hash>" on the .node <g> element
-      const raw = nodeEl.id || '';
-      if (raw) {
-        // Strip "flowchart-" prefix and trailing "-<number>"
-        return raw.replace(/^flowchart-/, '').replace(/-\\d+$/, '');
-      }
-      // Fallback: check class list
-      const classes = Array.from(nodeEl.classList);
-      for (const cls of classes) {
-        if (FLOW_LINE_MAP[cls] !== undefined) { return cls; }
-      }
-      return null;
-    }
-
-    // ── Sidebar click → jump ───────────────────────────────────────────────
-    document.querySelectorAll('.flow-item').forEach((item) => {
-      item.addEventListener('click', () => {
-        const line = parseInt(item.dataset.line || '0', 10);
-        if (line > 0) {
-          highlightSidebarItem(item.dataset.subgraph, line);
-          vscode.postMessage({ command: 'jumpToLine', line });
-        }
-      });
-    });
-
-    function highlightSidebarItem(subgraphId, line) {
-      document.querySelectorAll('.flow-item').forEach((el) => {
-        el.classList.remove('active');
-        if (parseInt(el.dataset.line, 10) === line) {
-          el.classList.add('active');
-          el.scrollIntoView({ block: 'nearest' });
-        }
-      });
-    }
-
-    // ── Tooltip on node hover ──────────────────────────────────────────────
-    document.addEventListener('mousemove', (e) => {
-      const nodeEl = e.target.closest('.node');
-      if (!nodeEl) {
-        tooltip.classList.remove('visible');
-        return;
-      }
-      const nodeId = extractMermaidNodeId(nodeEl);
-      if (!nodeId) { return; }
-      const line = FLOW_LINE_MAP[nodeId];
-      if (line !== undefined) {
-        tooltip.textContent = \`Click to jump to line \${line}\`;
-        tooltip.style.left  = (e.clientX + 12) + 'px';
-        tooltip.style.top   = (e.clientY + 12) + 'px';
-        tooltip.classList.add('visible');
-      }
-    });
-
-    // ── Receive messages FROM extension ───────────────────────────────────
-    window.addEventListener('message', (event) => {
-      const msg = event.data;
-      switch (msg.command) {
-        case 'update':
-          // The extension sends a new diagram source; re-render
-          renderDiagram(msg.mermaidSrc);
-          break;
-        case 'showError':
-          showError(msg.message);
-          break;
-      }
-    });
-
-    // ── Mermaid initialisation & rendering ────────────────────────────────
-    async function renderDiagram(src) {
-      loadingEl.style.display = 'flex';
-      errorEl.style.display   = 'none';
-      mermaidEl.innerHTML     = '';
-
-      try {
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: MERMAID_THEME,
-          securityLevel: 'loose', // needed to attach click handlers to SVG elements
-          flowchart: {
-            htmlLabels: true,
-            curve: 'basis',
-            padding: 20,
-            nodeSpacing: 40,
-            rankSpacing: 60,
-            useMaxWidth: false,
-          },
-          themeVariables: {
-            fontSize: '13px',
-          },
-        });
-
-        const { svg } = await mermaid.render('mule-diagram', src);
-        mermaidEl.innerHTML = svg;
-
-        // Attach click handler to the rendered SVG
-        const svgEl = mermaidEl.querySelector('svg');
-        if (svgEl) {
-          svgEl.addEventListener('click', handleDiagramClick);
-          // Make SVG responsive
-          svgEl.removeAttribute('height');
-          svgEl.style.maxWidth  = 'none';
-          svgEl.style.width     = '100%';
-          svgEl.style.minWidth  = '600px';
-        }
-
-        loadingEl.style.display = 'none';
-
-        // Auto-fit on first render
-        requestAnimationFrame(fitToWindow);
-      } catch (err) {
-        showError('Mermaid render error: ' + err.message + '\\n\\nDiagram source:\\n' + src.substring(0, 500));
-      }
-    }
-
-    function showError(msg) {
-      loadingEl.style.display = 'none';
-      errorEl.style.display   = 'block';
-      errorEl.innerHTML = '<strong>⚠ Render Error</strong><pre>' + escapeHtml(msg) + '</pre>';
-    }
-
-    function escapeHtml(s) {
-      return String(s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    // ── Boot ───────────────────────────────────────────────────────────────
-    renderDiagram(MERMAID_SRC);
-  </script>
-</body>
-</html>`;
-}
-
-/** Simple HTML escape for use in the template */
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+export function getWebviewContent(opts: WebviewContentOptions): string {
+  const { flows, nonce, warnings } = opts;
+
+  const serializeStep = (s: any) => ({
+    label: s.label,
+    nodeId: s.nodeId,
+    tagName: s.tagName,
+    shape: s.shape,
+    flowRefTarget: s.flowRefTarget || null,
+    rawAttrs: s.rawAttrs || {},
+  });
+
+  const flowsJson = JSON.stringify(
+    flows.map((f) => ({
+      kind: f.kind,
+      name: f.name,
+      lineNumber: f.lineNumber,
+      subgraphId: f.subgraphId,
+      steps: f.steps.map(serializeStep),
+      errorHandler: f.errorHandler
+        ? f.errorHandler.map((eh) => ({
+            type: eh.type,
+            label: eh.label,
+            steps: eh.steps.map(serializeStep),
+          }))
+        : null,
+    }))
+  );
+
+  const flowListItems = flows
+    .map((f) => {
+      const icon = f.kind === "flow" ? "🔵" : f.kind === "sub-flow" ? "🟡" : "🔴";
+      const kindLabel = f.kind === "flow" ? "Flow" : f.kind === "sub-flow" ? "Sub-Flow" : "Error Handler";
+      return `<li class="flow-item" data-line="${f.lineNumber}" data-subgraph="${f.subgraphId}" title="Jump to line ${f.lineNumber}">
+        <span class="fi">${icon}</span>
+        <div class="fd">
+          <span class="fk">${kindLabel}</span>
+          <span class="fn">${escapeHtml(f.name)}</span>
+        </div>
+        <span class="fs">${f.steps.length}s</span>
+      </li>`;
+    })
+    .join("\n");
+
+  const warningBanner =
+    warnings.length > 0
+      ? `<div class="warn-bar">⚠️ ${warnings.map((w) => escapeHtml(w)).join(" | ")}</div>`
+      : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}' 'unsafe-inline'; img-src data:;"/>
+<title>MuleSoft Flow Visualizer</title>
+<style nonce="${nonce}">
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  font-family:var(--vscode-font-family,Consolas,monospace);
+  font-size:var(--vscode-font-size,12px);
+  color:var(--vscode-foreground,#ccc);
+  background:var(--vscode-editor-background,#1e1e1e)}
+
+/* ── TOOLBAR ── */
+#toolbar{display:flex;align-items:center;gap:6px;padding:5px 10px;
+  background:var(--vscode-tab-activeBackground,#252526);
+  border-bottom:1px solid var(--vscode-panel-border,#3c3c3c);flex-shrink:0}
+#toolbar h1{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--vscode-titleBar-activeForeground,#ccc)}
+.tbtn{background:var(--vscode-button-secondaryBackground,#3c3c3c);
+  color:var(--vscode-button-secondaryForeground,#ccc);
+  border:1px solid transparent;border-radius:3px;padding:3px 8px;cursor:pointer;font-size:11px;
+  transition:background .12s}
+.tbtn:hover{background:var(--vscode-button-secondaryHoverBackground,#505050)}
+#zlabel{font-size:11px;color:var(--vscode-descriptionForeground,#888);min-width:42px;text-align:center}
+
+/* ── WARN ── */
+.warn-bar{padding:4px 12px;background:#452a00;border-bottom:1px solid #b89500;font-size:11px;flex-shrink:0}
+
+/* ── LAYOUT ── */
+#main{display:flex;flex:1;overflow:hidden;flex-direction:column}
+#canvas-row{display:flex;flex:1;overflow:hidden;min-height:0}
+
+/* ── SIDEBAR ── */
+#sidebar{width:210px;min-width:130px;background:var(--vscode-sideBar-background,#252526);
+  border-right:1px solid var(--vscode-panel-border,#3c3c3c);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+#sh{padding:7px 9px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--vscode-sideBarSectionHeader-foreground,#bbb);
+  background:var(--vscode-sideBarSectionHeader-background,#2d2d2d);
+  border-bottom:1px solid var(--vscode-panel-border,#3c3c3c)}
+#fl{list-style:none;overflow-y:auto;flex:1}
+.flow-item{display:flex;align-items:center;gap:5px;padding:4px 9px;cursor:pointer;
+  border-bottom:1px solid rgba(255,255,255,.04);font-size:11px;transition:background .08s}
+.flow-item:hover{background:var(--vscode-list-hoverBackground,#2a2d2e)}
+.flow-item.active{background:var(--vscode-list-activeSelectionBackground,#094771)}
+.fi{font-size:9px;flex-shrink:0}
+.fd{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:1px}
+.fk{font-size:9px;color:var(--vscode-descriptionForeground,#888)}
+.fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.fs{font-size:9px;color:var(--vscode-descriptionForeground,#666);flex-shrink:0}
+#sf{padding:5px 9px;font-size:10px;color:var(--vscode-descriptionForeground,#777);
+  border-top:1px solid var(--vscode-panel-border,#3c3c3c)}
+
+/* ── CANVAS ── */
+#cw{flex:1;overflow:hidden;position:relative;cursor:grab;background:var(--vscode-editor-background,#1e1e1e)}
+#cw.panning{cursor:grabbing}
+#main-svg{display:block;width:100%;height:100%}
+
+/* ── PROPERTIES PANEL ── */
+#props-panel{
+  flex-shrink:0;
+  background:var(--vscode-sideBar-background,#252526);
+  border-top:2px solid var(--vscode-panel-border,#3c3c3c);
+  display:flex;flex-direction:column;overflow:hidden;
+  height:0;
+  transition:height .2s ease;
+}
+#props-panel.open{height:260px}
+#props-header{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;
+  background:var(--vscode-sideBarSectionHeader-background,#2d2d2d);
+  border-bottom:1px solid var(--vscode-panel-border,#3c3c3c);
+  flex-shrink:0;cursor:ns-resize;user-select:none
+}
+#props-icon{font-size:14px}
+#props-title{font-size:11px;font-weight:700;flex:1;color:var(--vscode-foreground,#ccc)}
+#props-tag{font-size:10px;font-family:monospace;color:#569cd6;
+  background:#1e1e1e;padding:1px 6px;border-radius:3px;border:1px solid #3c3c3c}
+#props-close{background:none;border:none;color:var(--vscode-descriptionForeground,#888);
+  cursor:pointer;font-size:14px;padding:0 2px;line-height:1}
+#props-close:hover{color:var(--vscode-foreground,#ccc)}
+#props-body{flex:1;overflow-y:auto;padding:8px 0}
+.prop-group{margin-bottom:2px}
+.prop-group-hdr{
+  padding:3px 12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--vscode-descriptionForeground,#888);
+  background:var(--vscode-editor-background,#1e1e1e);
+  border-bottom:1px solid rgba(255,255,255,.04);
+  display:flex;align-items:center;gap:6px;cursor:pointer;
+  user-select:none
+}
+.prop-group-hdr::before{content:'▾';font-size:10px;transition:transform .15s}
+.prop-group-hdr.collapsed::before{transform:rotate(-90deg)}
+.prop-rows{overflow:hidden}
+.prop-row{
+  display:grid;grid-template-columns:160px 1fr;
+  padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.03);
+  align-items:start;font-size:11px
+}
+.prop-row:hover{background:rgba(255,255,255,.03)}
+.prop-key{color:var(--vscode-descriptionForeground,#999);font-size:10px;padding-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prop-val{color:var(--vscode-foreground,#d4d4d4);word-break:break-all;font-family:monospace;font-size:10px}
+.prop-val.expr{color:#4ec9b0}
+.prop-val.empty{color:#555;font-style:italic}
+#props-empty{padding:20px 12px;font-size:11px;color:var(--vscode-descriptionForeground,#666);text-align:center}
+#props-goto{margin:8px 12px 0;padding:4px 10px;font-size:11px;cursor:pointer;
+  background:var(--vscode-button-background,#007acc);
+  color:var(--vscode-button-foreground,#fff);
+  border:none;border-radius:3px}
+#props-goto:hover{background:var(--vscode-button-hoverBackground,#0098ff)}
+/* resize handle */
+#resize-handle{height:4px;cursor:ns-resize;background:transparent;flex-shrink:0}
+#resize-handle:hover{background:var(--vscode-focusBorder,#007acc)}
+/* schema badges */
+.type-badge{font-size:8px;padding:0 4px;background:#1e3a5f;color:#9cdcfe;
+  border-radius:3px;margin-left:3px;vertical-align:middle;font-family:monospace}
+.req-badge{color:#f48771;font-weight:700;margin-left:2px}
+.prop-val.default-val{color:#888;font-style:italic}
+.row-missing{background:rgba(200,50,50,.08)!important}
+.row-missing .prop-key{color:#f48771}
+/* TOOLTIP */
+#tip{position:fixed;background:var(--vscode-editorHoverWidget-background,#252526);
+  border:1px solid var(--vscode-editorHoverWidget-border,#454545);
+  color:var(--vscode-editorHoverWidget-foreground,#d4d4d4);
+  padding:3px 7px;border-radius:3px;font-size:10px;pointer-events:none;
+  opacity:0;transition:opacity .12s;z-index:100}
+#tip.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1>🔀 MuleSoft Multi-Flow Visualizer</h1>
+  <button class="tbtn" id="b-out" title="Zoom out (Ctrl -)">－</button>
+  <span id="zlabel">100%</span>
+  <button class="tbtn" id="b-in" title="Zoom in (Ctrl +)">＋</button>
+  <button class="tbtn" id="b-fit" title="Fit all (Ctrl 0)">⊡ Fit</button>
+  <button class="tbtn" id="b-ref" title="Refresh">↻ Refresh</button>
+  <button class="tbtn" id="b-svg" title="Export SVG">⬇ SVG</button>
+</div>
+${warningBanner}
+<div id="main">
+  <div id="canvas-row">
+    <div id="sidebar">
+      <div id="sh">Flows &amp; Sub-Flows</div>
+      <ul id="fl">${flowListItems || '<li style="padding:10px;color:#888;font-size:11px">No flows found</li>'}</ul>
+      <div id="sf">${flows.length} flow${flows.length !== 1 ? "s" : ""} detected</div>
+    </div>
+    <div id="cw">
+      <svg id="main-svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#5a9fd4"/>
+          </marker>
+          <marker id="arr-dash" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#9b59b6"/>
+          </marker>
+        </defs>
+        <g id="viewport"></g>
+      </svg>
+    </div>
+  </div>
+  <!-- Properties Panel (Studio-style, bottom) -->
+  <div id="resize-handle"></div>
+  <div id="props-panel">
+    <div id="props-header">
+      <span id="props-icon">📋</span>
+      <span id="props-title">Properties</span>
+      <span id="props-tag"></span>
+      <button id="props-goto" title="Jump to source line" style="display:none">↗ Go to Source</button>
+      <button id="props-close">✕</button>
+    </div>
+    <div id="props-body">
+      <div id="props-empty">Click a node to view its properties</div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script nonce="${nonce}">
+(function(){
+'use strict';
+
+// ── Global error guard (shows errors on canvas instead of silent blank) ────────
+window.onerror = function(msg, src, line, col, err){
+  const cw = document.getElementById('cw') || document.body;
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:12px;background:#4a1010;color:#f48771;font-family:monospace;font-size:11px;z-index:999;white-space:pre-wrap;border:1px solid #c0392b';
+  d.textContent = 'MuleViz Script Error (line ' + line + '): ' + msg + (err ? '\\n' + err.stack : '');
+  cw.appendChild(d);
+};
+
+const FLOWS = ${flowsJson};
+const vscode = acquireVsCodeApi();
+
+// ── Layout constants ──────────────────────────────────────────────────────────
+const NODE_W      = 120;
+const NODE_H      = 64;
+const NODE_GAP    = 36;
+const FLOW_PAD_H  = 18;
+const FLOW_PAD_V  = 14;
+const FLOW_HDR    = 26;
+const FLOW_GAP    = 24;
+const CANVAS_PAD  = 32;
+const EH_DIVIDER  = 10;
+const EH_HDR      = 22;
+const EH_PAD_V    = 10;
+const EH_STRAT_GAP= 6;
+const MINI_W      = 100;
+const MINI_GAP    = 20;
+const MINI_H      = 48;
+
+// ── Colors ────────────────────────────────────────────────────────────────────
+const C = {
+  flowBg:'#2d2d30', flowBorder:'#3e3e42',
+  flowHdr:'#007acc', subFlowHdr:'#68217a', errHdr:'#c0392b',
+  errSectionBorder:'#6b2929',
+  errStratProp:'#c0392b', errStratCont:'#d35400',
+  hdrText:'#ffffff',
+  nodeBg:'#1e1e1e', nodeHover:'#0e3a5c',
+  nodeText:'#d4d4d4', nodeSubText:'#888888',
+  arrow:'#5a9fd4', arrowDash:'#9b59b6',
+  nodeSelected:'#1a3a5c', nodeSelectedBorder:'#007acc',
+  stadium:'#4ec9b0', cylinder:'#ce9178', diamond:'#dcdcaa',
+  subroutine:'#c586c0', rect:'#569cd6',
+};
+
+// ── Connector Schema Registry ─────────────────────────────────────────────────
+// Groups for each connector: { groupLabel: [attrKey, ...] }
+// Keys match the XML attribute names (without namespace prefix for most).
+// Unknown attrs are auto-collected into "Other" group.
+const SCHEMA = {
+  // ── HTTP ──
+  'http:listener': {
+    'General':       ['doc:name','config-ref','path','allowedMethods'],
+    'Response':      ['outputMimeType','encoding'],
+    'Advanced':      ['primaryNodeOnly','responseStreamingMode'],
+  },
+  'http:request': {
+    'General':       ['doc:name','config-ref','method','path'],
+    'Query Params':  ['queryParams'],
+    'Headers':       ['headers'],
+    'Body':          ['body'],
+    'Advanced':      ['outputMimeType','encoding','followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
+  },
+  'https:listener': {
+    'General':       ['doc:name','config-ref','path','allowedMethods'],
+  },
+  'https:request': {
+    'General':       ['doc:name','config-ref','method','path'],
+  },
+
+  // ── Core ──
+  'flow-ref': {
+    'General':       ['doc:name','name'],
+  },
+  'logger': {
+    'General':       ['doc:name','level','message','category'],
+  },
+  'set-payload': {
+    'General':       ['doc:name','value','encoding','mimeType'],
+  },
+  'set-variable': {
+    'General':       ['doc:name','variableName','value','encoding','mimeType'],
+  },
+  'set-property': {
+    'General':       ['doc:name','propertyName','value','encoding','mimeType'],
+  },
+  'remove-variable': {
+    'General':       ['doc:name','variableName'],
+  },
+  'remove-property': {
+    'General':       ['doc:name','propertyName'],
+  },
+  'raise-error': {
+    'General':       ['doc:name','type','description'],
+  },
+  'choice': {
+    'General':       ['doc:name'],
+  },
+  'foreach': {
+    'General':       ['doc:name','collection','itemVariableName','batchSize','rootMessageVariableName','counterVariableName'],
+  },
+  'scatter-gather': {
+    'General':       ['doc:name','timeout'],
+    'Advanced':      ['target','targetValue','errorHandlingStrategy'],
+  },
+  'until-successful': {
+    'General':       ['doc:name','maxRetries','millisBetweenRetries'],
+  },
+  'try': {
+    'General':       ['doc:name'],
+  },
+  'async': {
+    'General':       ['doc:name'],
+    'Advanced':      ['maxConcurrency'],
+  },
+  'scheduler': {
+    'General':       ['doc:name'],
+  },
+
+  // ── DataWeave / Transform ──
+  'ee:transform': {
+    'General':       ['doc:name'],
+    'Advanced':      ['mode'],
+  },
+  'dw:transform-message': {
+    'General':       ['doc:name'],
+  },
+
+  // ── Database ──
+  'db:select': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['sql','queryTimeout','queryTimeoutUnit','fetchSize','maxRows'],
+    'Advanced':      ['target','targetValue','outputMimeType'],
+  },
+  'db:insert': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'db:update': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'db:delete': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'db:stored-procedure': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['sql','queryTimeout','queryTimeoutUnit'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'db:bulk-insert': {
+    'General':       ['doc:name','config-ref'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'db:bulk-update': {
+    'General':       ['doc:name','config-ref'],
+    'Advanced':      ['target','targetValue'],
+  },
+
+  // ── JMS ──
+  'jms:publish': {
+    'General':       ['doc:name','config-ref','destination','destinationType'],
+    'Message':       ['body','jmsType','correlationId','sendContentType','contentType','sendEncoding','encoding','timeToLive','timeToLiveUnit','persistent','priority','deliveryDelay','deliveryDelayUnit'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'jms:consume': {
+    'General':       ['doc:name','config-ref','destination','destinationType'],
+    'Message':       ['ackMode','selector','contentType','encoding','maximumWait','maximumWaitUnit'],
+    'Advanced':      ['target','targetValue','outputMimeType'],
+  },
+  'jms:publish-consume': {
+    'General':       ['doc:name','config-ref','destination','destinationType'],
+    'Advanced':      ['maximumWait','maximumWaitUnit','target','targetValue'],
+  },
+
+  // ── AMQP ──
+  'amqp:publish': {
+    'General':       ['doc:name','config-ref','exchangeName'],
+    'Advanced':      ['routingKey','target','targetValue'],
+  },
+  'amqp:consume': {
+    'General':       ['doc:name','config-ref','queueName'],
+    'Advanced':      ['ackMode','maximumWait','maximumWaitUnit','target','targetValue'],
+  },
+
+  // ── VM ──
+  'vm:publish': {
+    'General':       ['doc:name','config-ref','queueName'],
+    'Advanced':      ['sendTimeout','target','targetValue'],
+  },
+  'vm:consume': {
+    'General':       ['doc:name','config-ref','queueName'],
+    'Advanced':      ['maximumWait','maximumWaitUnit','target','targetValue','outputMimeType'],
+  },
+
+  // ── File ──
+  'file:read': {
+    'General':       ['doc:name','config-ref','path'],
+    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
+  },
+  'file:write': {
+    'General':       ['doc:name','config-ref','path','content'],
+    'Advanced':      ['encoding','mode','createParentDirectories'],
+  },
+  'file:list': {
+    'General':       ['doc:name','config-ref','directoryPath','recursive'],
+    'Advanced':      ['outputMimeType','target','targetValue'],
+  },
+  'file:move': {
+    'General':       ['doc:name','config-ref','sourcePath','targetPath'],
+    'Advanced':      ['createParentDirectories','overwrite'],
+  },
+  'file:delete': {
+    'General':       ['doc:name','config-ref','path'],
+  },
+
+  // ── FTP / SFTP ──
+  'ftp:read': {
+    'General':       ['doc:name','config-ref','path'],
+    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
+  },
+  'ftp:write': {
+    'General':       ['doc:name','config-ref','path','content'],
+    'Advanced':      ['createParentDirectories','mode'],
+  },
+  'sftp:read': {
+    'General':       ['doc:name','config-ref','path'],
+    'Advanced':      ['lock','outputMimeType','encoding','target','targetValue'],
+  },
+  'sftp:write': {
+    'General':       ['doc:name','config-ref','path','content'],
+    'Advanced':      ['createParentDirectories','mode'],
+  },
+
+  // ── Salesforce ──
+  'salesforce:query': {
+    'General':       ['doc:name','config-ref'],
+    'Query':         ['query','streamingOptions'],
+    'Advanced':      ['outputMimeType','target','targetValue'],
+  },
+  'salesforce:create': {
+    'General':       ['doc:name','config-ref','type'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'salesforce:update': {
+    'General':       ['doc:name','config-ref','type'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'salesforce:upsert': {
+    'General':       ['doc:name','config-ref','type','externalIdFieldName'],
+    'Advanced':      ['target','targetValue'],
+  },
+  'salesforce:delete': {
+    'General':       ['doc:name','config-ref'],
+    'Advanced':      ['target','targetValue'],
+  },
+
+  // ── APIkit ──
+  'apikit:router': {
+    'General':       ['doc:name','config-ref'],
+  },
+
+  // ── Validation ──
+  'validation:is-true': {
+    'General':       ['doc:name','expression','message'],
+  },
+  'validation:is-not-null': {
+    'General':       ['doc:name','value','message'],
+  },
+  'validation:is-null': {
+    'General':       ['doc:name','value','message'],
+  },
+  'validation:is-number': {
+    'General':       ['doc:name','value','minValue','maxValue','message'],
+  },
+  'validation:matches-regex': {
+    'General':       ['doc:name','value','regex','message'],
+  },
+
+  // ── Error handling ──
+  'on-error-propagate': {
+    'General':       ['doc:name','type','when','logException','enableNotifications'],
+  },
+  'on-error-continue': {
+    'General':       ['doc:name','type','when','logException','enableNotifications'],
+  },
+
+  // ── Crypto / Security ──
+  'crypto:encrypt': {
+    'General':       ['doc:name','config-ref','content','output','outputMimeType','outputEncoding'],
+  },
+  'crypto:decrypt': {
+    'General':       ['doc:name','config-ref','content','output','outputMimeType','outputEncoding'],
+  },
+  'oauth2:validate-token': {
+    'General':       ['doc:name','config-ref'],
+  },
+
+  // ── Cache ──
+  'ee:cache': {
+    'General':       ['doc:name','config-ref'],
+    'Advanced':      ['filter','filterExpression','cacheStatisticsEnabled'],
+  },
+
+  // ── Object Store ──
+  'os:store': {
+    'General':       ['doc:name','config-ref','key','value'],
+    'Advanced':      ['ttl','ttlUnit','persistent','overwrite','failIfPresent'],
+  },
+  'os:retrieve': {
+    'General':       ['doc:name','config-ref','key'],
+    'Advanced':      ['defaultValue','target','targetValue','outputMimeType'],
+  },
+  'os:remove': {
+    'General':       ['doc:name','config-ref','key','failIfAbsent'],
+  },
+  'os:contains': {
+    'General':       ['doc:name','config-ref','key','target'],
+  },
+
+  // ── Mule Batch ──
+  'batch:job': {
+    'General':       ['doc:name'],
+    'Advanced':      ['maxFailedRecords','jobInstanceId'],
+  },
+  'batch:step': {
+    'General':       ['doc:name','acceptExpression','acceptPolicy'],
+    'Advanced':      ['maxConcurrency','minBatchSize'],
+  },
+
+  // ── SAP ──
+  'sap:invoke-sync': {
+    'General':       ['doc:name','config-ref','functionName'],
+    'Advanced':      ['transactionalAction','target','targetValue'],
+  },
+  'sap:invoke-async': {
+    'General':       ['doc:name','config-ref','functionName'],
+  },
+
+  // ── Kafka ──
+  'kafka:publish': {
+    'General':       ['doc:name','config-ref','topic'],
+    'Message':       ['key','value','headers'],
+  },
+  'kafka:consume': {
+    'General':       ['doc:name','config-ref'],
+  },
+
+  // ── MQ (Anypoint MQ) ──
+  'anypoint-mq:publish': {
+    'General':       ['doc:name','config-ref','destination'],
+    'Message':       ['body','priority','messageId','sendContentType','contentType'],
+  },
+  'anypoint-mq:consume': {
+    'General':       ['doc:name','config-ref','destination'],
+    'Advanced':      ['ackMode','pollingTime','maxLocalMessages','target','targetValue'],
+  },
+  'anypoint-mq:ack': {
+    'General':       ['doc:name','config-ref'],
+  },
+  'anypoint-mq:nack': {
+    'General':       ['doc:name','config-ref'],
+  },
+
+  // ── Email ──
+  'email:send': {
+    'General':       ['doc:name','config-ref'],
+    'Message':       ['toAddresses','fromAddress','subject','content','contentType'],
+    'Advanced':      ['ccAddresses','bccAddresses','replyToAddresses'],
+  },
+  'email:list-imap': {
+    'General':       ['doc:name','config-ref'],
+  },
+  'email:list-pop3': {
+    'General':       ['doc:name','config-ref'],
+  },
+};
+
+// ── Pretty-print attribute key ─────────────────────────────────────────────────
+function friendlyKey(k){
+  // Convert camelCase, kebab-case, colon-separated to Title Case
+  return k
+    .replace(/^doc:/,'')
+    .replace(/^@_/,'')
+    .replace(/([a-z])([A-Z])/g,'$1 $2')
+    .replace(/[-:]/g,' ')
+    .replace(/\b\w/g,c=>c.toUpperCase())
+    .trim();
+}
+
+// ── Build grouped property sections from rawAttrs + schema ───────────────────
+function buildPropGroups(tagName, rawAttrs){
+  const schema = SCHEMA[tagName] || {};
+  const claimed = new Set();
+  const groups = [];
+
+  // schema-defined groups
+  for(const [grpLabel, keys] of Object.entries(schema)){
+    const rows = [];
+    for(const k of keys){
+      claimed.add(k);
+      const v = rawAttrs[k];
+      if(v !== undefined && v !== null && v !== '') rows.push({k,v});
+    }
+    if(rows.length) groups.push({label:grpLabel, rows});
+  }
+
+  // "Other" group: any attrs not in schema
+  const otherRows = [];
+  for(const [k,v] of Object.entries(rawAttrs)){
+    if(!claimed.has(k) && k !== 'name' && v !== undefined && v !== '') {
+      otherRows.push({k,v});
+    }
+  }
+  if(otherRows.length) groups.push({label:'Other', rows:otherRows});
+
+  // If nothing was schema-matched at all, show ALL attrs in General
+  if(groups.length === 0 && Object.keys(rawAttrs).length > 0){
+    const rows = Object.entries(rawAttrs)
+      .filter(([,v])=> v !== '')
+      .map(([k,v])=>({k,v}));
+    if(rows.length) groups.push({label:'General', rows});
+  }
+
+  return groups;
+}
+
+// ── SVG helpers ───────────────────────────────────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent){
+  const e = document.createElementNS(NS, tag);
+  if(attrs) for(const [k,v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  if(parent) parent.appendChild(e);
+  return e;
+}
+function trunc(s, maxPx){ const mc=Math.max(3,Math.floor(maxPx/6.5)); return s&&s.length>mc?s.slice(0,mc-1)+'…':s||''; }
+
+// ── Properties Panel DOM refs ─────────────────────────────────────────────────
+const propsPanel  = document.getElementById('props-panel');
+const propsTitle  = document.getElementById('props-title');
+const propsTag    = document.getElementById('props-tag');
+const propsBody   = document.getElementById('props-body');
+const propsIcon   = document.getElementById('props-icon');
+const propsGoto   = document.getElementById('props-goto');
+let propLineNo    = 0;
+
+const ICONS_MAP = {
+  stadium:'\uD83D\uDFE2', cylinder:'\uD5D9\uFE0F', diamond:'\uD83D\uDD00', subroutine:'\uD83D\uDCE4', rect:'\u2699\uFE0F'
+};
+
+// ── Currently selected node ───────────────────────────────────────────────────
+let selectedNodeEl = null;
+
+function selectNode(nodeEl, step, flowLineNumber){
+  // Deselect previous
+  if(selectedNodeEl){
+    const nb = selectedNodeEl.querySelector('.nb');
+    if(nb){ nb.setAttribute('fill', C.nodeBg); nb.setAttribute('stroke', C[selectedNodeEl._acColor]||C.rect); }
+  }
+  selectedNodeEl = nodeEl;
+  nodeEl._acColor = nodeEl._acColor || 'rect';
+  const nb = nodeEl.querySelector('.nb');
+  if(nb){ nb.setAttribute('fill', C.nodeSelected); nb.setAttribute('stroke', C.nodeSelectedBorder); }
+
+  // 1. Show rawAttrs immediately for instant feedback
+  showProperties(step, flowLineNumber);
+
+  // 2. Ask extension to resolve the full connector schema from the JAR
+  const prefix = step.tagName.includes(':') ? step.tagName.split(':')[0] : '';
+  if(prefix && prefix !== 'doc'){
+    setSchemaLoading(true);
+    vscode.postMessage({
+      command: 'getConnectorSchema',
+      tagName: step.tagName,
+      rawAttrs: step.rawAttrs || {},
+      lineNumber: flowLineNumber,
+    });
+  }
+}
+
+// ── Schema loading badge ──────────────────────────────────────────────────────
+function setSchemaLoading(on){
+  let badge = document.getElementById('schema-badge');
+  if(on){
+    if(!badge){
+      badge = document.createElement('span');
+      badge.id = 'schema-badge';
+      badge.style.cssText = 'font-size:9px;padding:1px 6px;background:#005f87;color:#9cdcfe;'
+        +'border-radius:8px;margin-left:6px;vertical-align:middle';
+      propsTag.insertAdjacentElement('afterend', badge);
+    }
+    badge.textContent = '\u27f3 loading schema\u2026';
+    badge.style.background='#005f87'; badge.style.color='#9cdcfe';
+    badge.style.display = '';
+  } else {
+    if(badge) badge.style.display = 'none';
+  }
+}
+
+function showProperties(step, lineNumber){
+  propLineNo = lineNumber;
+  propsPanel.classList.add('open');
+  propsIcon.textContent = ICONS_MAP[step.shape] || '\u2699\ufe0f';
+  const docName = step.rawAttrs['doc:name'] || step.rawAttrs['name'] || '';
+  propsTitle.textContent = docName || friendlyKey(step.tagName);
+  propsTag.textContent   = step.tagName;
+  propsGoto.style.display = lineNumber > 0 ? '' : 'none';
+  renderRawAttrGroups(step.tagName, step.rawAttrs);
+}
+
+function renderRawAttrGroups(tagName, rawAttrs){
+  const groups = buildPropGroups(tagName, rawAttrs);
+  propsBody.innerHTML = '';
+  if(!groups.length){
+    propsBody.innerHTML = '<div style="padding:16px 12px;color:#666;font-size:11px;text-align:center">No attributes — loading schema…</div>';
+    return;
+  }
+  for(const grp of groups) appendPropGroup(propsBody, grp.label, grp.rows);
+}
+
+function renderSchemaGroups(tagName, rawAttrs, matchedOp){
+  propsBody.innerHTML = '';
+  if(!matchedOp || !matchedOp.parameters || !matchedOp.parameters.length){
+    renderRawAttrGroups(tagName, rawAttrs); return;
+  }
+  const generalRows=[], advRows=[];
+  for(const param of matchedOp.parameters){
+    const v = rawAttrs[param.name] || '';
+    const row = {k:param.name, v, param};
+    if(param.required || ['doc:name','config-ref','name'].includes(param.name)) generalRows.push(row);
+    else advRows.push(row);
+  }
+  if(generalRows.length) appendSchemaGroup(propsBody, 'General', generalRows, rawAttrs);
+  if(advRows.length)     appendSchemaGroup(propsBody, 'Advanced', advRows, rawAttrs);
+  const knownKeys = new Set(matchedOp.parameters.map(p=>p.name));
+  const extraRows = Object.entries(rawAttrs).filter(([k,v])=>!knownKeys.has(k)&&v!=='').map(([k,v])=>({k,v}));
+  if(extraRows.length) appendPropGroup(propsBody, 'XML Extras', extraRows);
+}
+
+function appendPropGroup(container, label, rows){
+  const g=document.createElement('div'); g.className='prop-group';
+  const hdr=document.createElement('div'); hdr.className='prop-group-hdr'; hdr.textContent=label;
+  const body=document.createElement('div'); body.className='prop-rows';
+  hdr.addEventListener('click',()=>{ hdr.classList.toggle('collapsed'); body.style.display=hdr.classList.contains('collapsed')?'none':''; });
+  g.appendChild(hdr);
+  for(const {k,v} of rows) body.appendChild(makeRawRow(k,v));
+  g.appendChild(body); container.appendChild(g);
+}
+
+function appendSchemaGroup(container, label, rows){
+  const g=document.createElement('div'); g.className='prop-group';
+  const hdr=document.createElement('div'); hdr.className='prop-group-hdr'; hdr.textContent=label;
+  const body=document.createElement('div'); body.className='prop-rows';
+  hdr.addEventListener('click',()=>{ hdr.classList.toggle('collapsed'); body.style.display=hdr.classList.contains('collapsed')?'none':''; });
+  g.appendChild(hdr);
+  for(const r of rows) body.appendChild(makeSchemaRow(r.k, r.v, r.param));
+  g.appendChild(body); container.appendChild(g);
+}
+
+function makeRawRow(k,v){
+  const row=document.createElement('div'); row.className='prop-row';
+  const kEl=document.createElement('div'); kEl.className='prop-key'; kEl.textContent=friendlyKey(k); kEl.title=k;
+  row.appendChild(kEl); row.appendChild(makeValueEl(v,null)); return row;
+}
+
+function makeSchemaRow(k,v,param){
+  const isEmpty=!v||!v.trim();
+  const row=document.createElement('div');
+  row.className='prop-row'+(param&&param.required&&isEmpty?' row-missing':'');
+  const kEl=document.createElement('div'); kEl.className='prop-key';
+  kEl.innerHTML=friendlyKey(k)
+    +(param&&param.type?' <span class=\\"type-badge\\">'+escHtml(param.type)+'</span>':'')
+    +(param&&param.required?' <span class="req-badge">*</span>':'');
+  kEl.title=k+(param&&param.allowedValues?'\nAllowed: '+param.allowedValues.join(', '):'');
+  row.appendChild(kEl); row.appendChild(makeValueEl(v,param)); return row;
+}
+
+function makeValueEl(v,param){
+  const el=document.createElement('div'); el.className='prop-val';
+  if(!v||!v.trim()){
+    el.textContent=param&&param.defaultValue?param.defaultValue:'(empty)';
+    el.classList.add(param&&param.defaultValue?'default-val':'empty');
+  } else if(v.startsWith('#[')||v.includes('vars.')||v.includes('payload')||v.includes('attributes')){
+    el.textContent=v; el.classList.add('expr'); el.title='DataWeave expression';
+  } else { el.textContent=v; }
+  return el;
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+document.getElementById('props-close').addEventListener('click',()=>{
+  propsPanel.classList.remove('open');
+  if(selectedNodeEl){
+    const nb = selectedNodeEl.querySelector('.nb');
+    if(nb) nb.setAttribute('fill', C.nodeBg);
+    selectedNodeEl = null;
+  }
+});
+
+propsGoto.addEventListener('click',()=>{
+  if(propLineNo > 0) vscode.postMessage({command:'jumpToLine',line:propLineNo});
+});
+
+// ── Resizable panel (drag resize handle) ─────────────────────────────────────
+const resizeHandle = document.getElementById('resize-handle');
+let resizing=false, resizeStartY=0, resizeStartH=0;
+resizeHandle.addEventListener('mousedown',e=>{
+  resizing=true; resizeStartY=e.clientY;
+  resizeStartH = propsPanel.classList.contains('open') ? propsPanel.offsetHeight : 0;
+  e.preventDefault();
+});
+window.addEventListener('mousemove',e=>{
+  if(!resizing) return;
+  const delta = resizeStartY - e.clientY;
+  const newH  = Math.max(0, Math.min(500, resizeStartH + delta));
+  if(newH < 40){ propsPanel.classList.remove('open'); propsPanel.style.height=''; }
+  else { propsPanel.classList.add('open'); propsPanel.style.height = newH+'px'; }
+});
+window.addEventListener('mouseup',()=>{ resizing=false; });
+
+// ── Draw a single node ────────────────────────────────────────────────────────
+function drawNode(parent, step, x, y, flowLineNumber){
+  const g = svgEl('g',{transform:\`translate(\${x},\${y})\`,cursor:'pointer','data-nodeid':step.nodeId},parent);
+  g._acColor = step.shape;
+  const ac = C[step.shape]||C.rect;
+  const ih = NODE_H;
+
+  const nb = svgEl('rect',{x:0,y:0,width:NODE_W,height:ih,rx:3,fill:C.nodeBg,stroke:ac,'stroke-width':1.5,class:'nb'},g);
+  svgEl('rect',{x:0,y:0,width:NODE_W,height:4,rx:2,fill:ac},g);
+  svgEl('rect',{x:0,y:2,width:NODE_W,height:2,fill:ac},g);
+  svgEl('rect',{x:0,y:4,width:24,height:ih-4,fill:ac+'18'},g);
+
+  const ICONS={stadium:'⬭',cylinder:'⊕',diamond:'⬡',subroutine:'⤵',rect:'▬'};
+  const ico = svgEl('text',{x:12,y:ih/2+4,'text-anchor':'middle','font-size':14,fill:ac,style:'pointer-events:none'},g);
+  ico.textContent = ICONS[step.shape]||'▬';
+
+  const tagShort = step.tagName.includes(':') ? step.tagName.split(':')[1] : step.tagName;
+  const tl = svgEl('text',{x:28,y:15,'font-size':8,'font-family':'monospace',fill:ac+'99',style:'pointer-events:none'},g);
+  tl.textContent = trunc(tagShort.toUpperCase(), NODE_W-32);
+
+  const parts = step.label.split(' - ');
+  const ml = svgEl('text',{x:28,y:32,'font-size':10,'font-weight':'600',fill:C.nodeText,style:'pointer-events:none'},g);
+  ml.textContent = trunc(parts[0], NODE_W-32);
+  if(parts[1]){
+    const sl = svgEl('text',{x:28,y:47,'font-size':9,fill:C.nodeSubText,style:'pointer-events:none'},g);
+    sl.textContent = trunc(parts[1], NODE_W-32);
+  }
+
+  // Click → show properties panel (NOT jumping to code directly)
+  g.addEventListener('click',e=>{
+    e.stopPropagation();
+    highlightSidebar(null, flowLineNumber);
+    selectNode(g, step, flowLineNumber);
+  });
+  g.addEventListener('mouseenter',e=>{
+    if(selectedNodeEl!==g) nb.setAttribute('fill', C.nodeHover);
+    showTip(e, step.tagName + (step.rawAttrs['doc:name'] ? ' — '+step.rawAttrs['doc:name'] : ''));
+  });
+  g.addEventListener('mouseleave',()=>{
+    if(selectedNodeEl!==g) nb.setAttribute('fill', C.nodeBg);
+    hideTip();
+  });
+  return g;
+}
+
+// ── Mini node (error-handler strategy) ───────────────────────────────────────
+function drawMiniNode(parent, step, x, y, flowLineNumber){
+  const g = svgEl('g',{transform:\`translate(\${x},\${y})\`,cursor:'pointer'},parent);
+  g._acColor = step.shape;
+  const ac = C[step.shape]||C.rect;
+
+  const nb = svgEl('rect',{x:0,y:0,width:MINI_W,height:MINI_H,rx:3,fill:C.nodeBg,stroke:ac,'stroke-width':1.2,class:'nb'},g);
+  svgEl('rect',{x:0,y:0,width:MINI_W,height:3,rx:2,fill:ac},g);
+  svgEl('rect',{x:0,y:2,width:MINI_W,height:2,fill:ac},g);
+  svgEl('rect',{x:0,y:3,width:18,height:MINI_H-3,fill:ac+'18'},g);
+
+  const tagShort = step.tagName.includes(':') ? step.tagName.split(':')[1] : step.tagName;
+  const tl = svgEl('text',{x:22,y:13,'font-size':7,'font-family':'monospace',fill:ac+'99',style:'pointer-events:none'},g);
+  tl.textContent = trunc(tagShort.toUpperCase(), MINI_W-26);
+
+  const parts = step.label.split(' - ');
+  const ml = svgEl('text',{x:22,y:28,'font-size':9,'font-weight':'600',fill:C.nodeText,style:'pointer-events:none'},g);
+  ml.textContent = trunc(parts[0], MINI_W-26);
+  if(parts[1]){
+    const sl = svgEl('text',{x:22,y:40,'font-size':8,fill:C.nodeSubText,style:'pointer-events:none'},g);
+    sl.textContent = trunc(parts[1], MINI_W-26);
+  }
+
+  g.addEventListener('click',e=>{e.stopPropagation(); selectNode(g,step,flowLineNumber);});
+  g.addEventListener('mouseenter',e=>{if(selectedNodeEl!==g)nb.setAttribute('fill',C.nodeHover);showTip(e,step.tagName);});
+  g.addEventListener('mouseleave',()=>{if(selectedNodeEl!==g)nb.setAttribute('fill',C.nodeBg);hideTip();});
+  return g;
+}
+
+// ── Error-section sizing ──────────────────────────────────────────────────────
+function errorSectionHeight(flow){
+  if(!flow.errorHandler||!flow.errorHandler.length) return 0;
+  let h = EH_DIVIDER + EH_HDR;
+  for(const s of flow.errorHandler) h += EH_HDR + EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
+  return h;
+}
+
+function flowSize(flow){
+  const n = Math.max(flow.steps.length,1);
+  const mainW = n*NODE_W + Math.max(0,n-1)*NODE_GAP + FLOW_PAD_H*2;
+  let errW = 0;
+  if(flow.errorHandler){
+    for(const strat of flow.errorHandler){
+      const m = Math.max(strat.steps.length,1);
+      errW = Math.max(errW, FLOW_PAD_H + m*MINI_W + Math.max(0,m-1)*MINI_GAP + FLOW_PAD_H);
+    }
+  }
+  const cw = Math.max(mainW, errW, 200);
+  const mainH = FLOW_HDR + FLOW_PAD_V + NODE_H + FLOW_PAD_V;
+  return {w:cw, h:mainH + errorSectionHeight(flow)};
+}
+
+// ── Draw error-handler section ────────────────────────────────────────────────
+function drawErrorSection(parent, flow, flowW, mainH){
+  if(!flow.errorHandler||!flow.errorHandler.length) return;
+  let curY = mainH + EH_DIVIDER;
+
+  svgEl('rect',{x:0,y:curY,width:flowW,height:EH_HDR,fill:C.errHdr+'33',rx:0},parent);
+  svgEl('rect',{x:0,y:curY,width:4,height:EH_HDR,fill:C.errHdr},parent);
+  const ehl = svgEl('text',{x:10,y:curY+EH_HDR/2+1,'dominant-baseline':'middle',
+    fill:C.errHdr,'font-size':10,'font-weight':700,style:'pointer-events:none'},parent);
+  ehl.textContent = '⚠ Error Handler';
+  curY += EH_HDR;
+
+  for(const strat of flow.errorHandler){
+    const isProp = strat.type==='on-error-propagate';
+    const sc2 = isProp ? C.errStratProp : C.errStratCont;
+    svgEl('rect',{x:4,y:curY,width:flowW-4,height:EH_HDR,fill:sc2+'22'},parent);
+    svgEl('rect',{x:4,y:curY,width:3,height:EH_HDR,fill:sc2},parent);
+    const sl = svgEl('text',{x:14,y:curY+EH_HDR/2+1,'dominant-baseline':'middle',
+      fill:sc2,'font-size':9,'font-weight':600,style:'pointer-events:none'},parent);
+    sl.textContent = trunc(strat.label, flowW-20);
+    curY += EH_HDR;
+
+    const nodesY = curY + EH_PAD_V;
+    if(!strat.steps.length){
+      const ep = svgEl('text',{x:FLOW_PAD_H,y:nodesY+MINI_H/2,'dominant-baseline':'middle',
+        fill:'#555','font-size':10,style:'pointer-events:none'},parent);
+      ep.textContent='Empty handler';
+    } else {
+      strat.steps.forEach((step,i)=>{
+        const nx = FLOW_PAD_H + i*(MINI_W+MINI_GAP);
+        drawMiniNode(parent, step, nx, nodesY, flow.lineNumber);
+        if(i<strat.steps.length-1){
+          const ay = nodesY+MINI_H/2;
+          svgEl('line',{x1:nx+MINI_W,y1:ay,x2:FLOW_PAD_H+(i+1)*(MINI_W+MINI_GAP)-2,y2:ay,
+            stroke:C.errHdr,'stroke-width':1.2,'marker-end':'url(#arr)'},parent);
+        }
+      });
+    }
+    curY += EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
+  }
+}
+
+// ── Draw one flow ─────────────────────────────────────────────────────────────
+function drawFlow(parent, flow, x, y){
+  const {w,h} = flowSize(flow);
+  const hc = flow.kind==='flow'?C.flowHdr:flow.kind==='sub-flow'?C.subFlowHdr:C.errHdr;
+  const mainH = FLOW_HDR+FLOW_PAD_V+NODE_H+FLOW_PAD_V;
+
+  const g = svgEl('g',{transform:\`translate(\${x},\${y})\`,'data-subgraph':flow.subgraphId,'data-line':flow.lineNumber},parent);
+  svgEl('rect',{x:0,y:0,width:w,height:h,rx:4,fill:C.flowBg,stroke:C.flowBorder,'stroke-width':1},g);
+  svgEl('rect',{x:0,y:0,width:w,height:FLOW_HDR,rx:4,fill:hc},g);
+  svgEl('rect',{x:0,y:FLOW_HDR-4,width:w,height:4,fill:hc},g);
+
+  const kindPfx = flow.kind==='flow'?'Flow':flow.kind==='sub-flow'?'Sub-Flow':'Error Handler';
+  const hl = svgEl('text',{x:9,y:FLOW_HDR/2+1,'dominant-baseline':'middle',
+    fill:C.hdrText,'font-size':11,'font-weight':700,style:'pointer-events:none'},g);
+  hl.textContent = trunc(\`\${kindPfx}: \${flow.name}\`, w-18);
+
+  const hit = svgEl('rect',{x:0,y:0,width:w,height:FLOW_HDR,fill:'transparent',cursor:'pointer'},g);
+  hit.addEventListener('click',()=>{
+    highlightSidebar(flow.subgraphId, flow.lineNumber);
+    vscode.postMessage({command:'jumpToLine',line:flow.lineNumber});
+  });
+
+  if(!flow.steps.length){
+    const ep = svgEl('text',{x:w/2,y:FLOW_HDR+FLOW_PAD_V+NODE_H/2,
+      'text-anchor':'middle','dominant-baseline':'middle',fill:'#555','font-size':11,style:'pointer-events:none'},g);
+    ep.textContent='Empty Flow';
+  } else {
+    flow.steps.forEach((step,i)=>{
+      const nx = FLOW_PAD_H + i*(NODE_W+NODE_GAP);
+      const ny = FLOW_HDR + FLOW_PAD_V;
+      drawNode(g, step, nx, ny, flow.lineNumber);
+      if(i<flow.steps.length-1){
+        const ay = FLOW_HDR+FLOW_PAD_V+NODE_H/2;
+        svgEl('line',{x1:nx+NODE_W,y1:ay,x2:FLOW_PAD_H+(i+1)*(NODE_W+NODE_GAP)-2,y2:ay,
+          stroke:C.arrow,'stroke-width':1.5,'marker-end':'url(#arr)'},g);
+      }
+    });
+  }
+
+  drawErrorSection(g, flow, w, mainH);
+  return {w,h};
+}
+
+// ── Full render ───────────────────────────────────────────────────────────────
+let canvasW=0, canvasH=0;
+function render(){
+  const vp = document.getElementById('viewport');
+  vp.innerHTML='';
+  selectedNodeEl=null;
+  canvasW=0; canvasH=0;
+  if(!FLOWS.length){
+    svgEl('text',{x:200,y:200,'text-anchor':'middle',fill:'#555','font-size':14},vp).textContent='No flows found';
+    return;
+  }
+  let curY=CANVAS_PAD;
+  const rects=[];
+  FLOWS.forEach(flow=>{
+    const {w,h}=drawFlow(vp,flow,CANVAS_PAD,curY);
+    rects.push({flow,x:CANVAS_PAD,y:curY,w,h});
+    canvasW=Math.max(canvasW,CANVAS_PAD+w+CANVAS_PAD);
+    curY+=h+FLOW_GAP;
+  });
+  canvasH=curY-FLOW_GAP+CANVAS_PAD;
+  canvasW=Math.max(canvasW,400);
+
+  // cross-flow ref arrows
+  const flowByName=new Map(FLOWS.map(f=>[f.name,f]));
+  const rectBySg=new Map(rects.map(r=>[r.flow.subgraphId,r]));
+  rects.forEach(src=>{
+    src.flow.steps.forEach((step,si)=>{
+      if(!step.flowRefTarget) return;
+      const tgt=flowByName.get(step.flowRefTarget);
+      if(!tgt) return;
+      const dst=rectBySg.get(tgt.subgraphId);
+      if(!dst) return;
+      const sx=src.x+FLOW_PAD_H+si*(NODE_W+NODE_GAP)+NODE_W/2;
+      const sy=src.y+src.h;
+      const dx=dst.x+FLOW_PAD_H+NODE_W/2;
+      const dy=dst.y;
+      svgEl('path',{d:\`M\${sx},\${sy} C\${sx},\${sy+40} \${dx},\${dy-40} \${dx},\${dy}\`,
+        stroke:C.arrowDash,'stroke-width':1.5,fill:'none','stroke-dasharray':'5,3',
+        'marker-end':'url(#arr-dash)',opacity:.8},vp);
+    });
+  });
+  fitToWindow();
+}
+
+// ── Pan & Zoom ────────────────────────────────────────────────────────────────
+const mainSvg=document.getElementById('main-svg');
+const vp=document.getElementById('viewport');
+const zl=document.getElementById('zlabel');
+const cw=document.getElementById('cw');
+let tx=0,ty=0,sc=1;
+
+function applyT(){
+  vp.setAttribute('transform',\`translate(\${tx},\${ty}) scale(\${sc})\`);
+  zl.textContent=Math.round(sc*100)+'%';
+}
+function clampScale(s){ return Math.max(0.08,Math.min(6,s)); }
+function zoomAt(factor,cx,cy){
+  const ns=clampScale(sc*factor);
+  tx=cx-(cx-tx)*(ns/sc); ty=cy-(cy-ty)*(ns/sc); sc=ns; applyT();
+}
+function fitToWindow(){
+  if(!canvasW||!canvasH) return;
+  const W=cw.clientWidth||600, H=cw.clientHeight||400;
+  sc=clampScale(Math.min(W/canvasW,H/canvasH)*0.92);
+  tx=(W-canvasW*sc)/2; ty=(H-canvasH*sc)/2;
+  if(tx<8)tx=8; if(ty<8)ty=8; applyT();
+}
+
+document.getElementById('b-in').onclick  = ()=>zoomAt(1.25,cw.clientWidth/2,cw.clientHeight/2);
+document.getElementById('b-out').onclick = ()=>zoomAt(1/1.25,cw.clientWidth/2,cw.clientHeight/2);
+document.getElementById('b-fit').onclick = fitToWindow;
+document.getElementById('b-ref').onclick = ()=>vscode.postMessage({command:'refresh'});
+document.getElementById('b-svg').onclick = exportSvg;
+
+// Plain scroll = pan; Ctrl+scroll = zoom  (Anypoint Studio behaviour)
+cw.addEventListener('wheel',e=>{
+  e.preventDefault();
+  if(e.ctrlKey||e.metaKey){
+    const r=cw.getBoundingClientRect();
+    zoomAt(e.deltaY<0?1.1:1/1.1,e.clientX-r.left,e.clientY-r.top);
+  } else {
+    tx-=e.deltaX; ty-=e.deltaY; applyT();
+  }
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  const mod=e.ctrlKey||e.metaKey;
+  if(mod&&e.key==='='){e.preventDefault();zoomAt(1.2,cw.clientWidth/2,cw.clientHeight/2);}
+  if(mod&&e.key==='-'){e.preventDefault();zoomAt(1/1.2,cw.clientWidth/2,cw.clientHeight/2);}
+  if(mod&&e.key==='0'){e.preventDefault();fitToWindow();}
+  if(!mod){
+    const S=40;
+    if(e.key==='ArrowUp'){e.preventDefault();ty+=S;applyT();}
+    if(e.key==='ArrowDown'){e.preventDefault();ty-=S;applyT();}
+    if(e.key==='ArrowLeft'){e.preventDefault();tx+=S;applyT();}
+    if(e.key==='ArrowRight'){e.preventDefault();tx-=S;applyT();}
+  }
+});
+
+let panning=false,px0=0,py0=0,tx0=0,ty0=0;
+cw.addEventListener('mousedown',e=>{
+  if(e.button!==0) return;
+  if(e.target.closest('[cursor="pointer"]')) return;
+  panning=true; px0=e.clientX; py0=e.clientY; tx0=tx; ty0=ty;
+  cw.classList.add('panning');
+});
+window.addEventListener('mousemove',e=>{if(!panning)return;tx=tx0+(e.clientX-px0);ty=ty0+(e.clientY-py0);applyT();});
+window.addEventListener('mouseup',()=>{panning=false;cw.classList.remove('panning');});
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('.flow-item').forEach(item=>{
+  item.addEventListener('click',()=>{
+    const line=parseInt(item.dataset.line||'0',10);
+    if(line>0){ highlightSidebar(item.dataset.subgraph,line); vscode.postMessage({command:'jumpToLine',line}); }
+  });
+});
+function highlightSidebar(sgId,line){
+  document.querySelectorAll('.flow-item').forEach(el=>{
+    const active = (sgId&&el.dataset.subgraph===sgId)||parseInt(el.dataset.line,10)===line;
+    el.classList.toggle('active',active);
+    if(active) el.scrollIntoView({block:'nearest'});
+  });
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+const tip=document.getElementById('tip');
+function showTip(e,msg){tip.textContent=msg;tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+14)+'px';tip.classList.add('show');}
+function hideTip(){tip.classList.remove('show');}
+document.addEventListener('mousemove',e=>{
+  if(tip.classList.contains('show')){tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+14)+'px';}
+});
+
+// ── SVG Export ────────────────────────────────────────────────────────────────
+function exportSvg(){
+  const clone=mainSvg.cloneNode(true);
+  clone.setAttribute('width',canvasW); clone.setAttribute('height',canvasH);
+  clone.querySelector('#viewport').setAttribute('transform','');
+  const blob=new Blob([clone.outerHTML],{type:'image/svg+xml'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='mule-flows.svg'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+
+// ── Hot update + connector schema response ────────────────────────────────────
+window.addEventListener('message',e=>{
+  const msg=e.data;
+  if(msg.command==='updateFlows'){
+    FLOWS.splice(0,FLOWS.length,...msg.flows); render();
+  } else if(msg.command==='update'){
+    render();
+  } else if(msg.command==='connectorSchema'){
+    // Extension resolved the JAR schema — upgrade the properties panel
+    setSchemaLoading(false);
+    if(propsPanel.classList.contains('open')){
+      if(msg.error){
+        // Show error badge but keep rawAttrs panel
+        const badge = document.getElementById('schema-badge');
+        if(badge){
+          badge.textContent = '⚠ schema unavailable';
+          badge.style.background = '#4a1a1a';
+          badge.style.color = '#f48771';
+          badge.style.display = '';
+        }
+        return;
+      }
+      if(msg.matched){
+        // Full schema available — re-render with type info + required flags
+        renderSchemaGroups(msg.tagName, msg.rawAttrs, msg.matched);
+        // Update schema badge to show connector version
+        const badge = document.getElementById('schema-badge');
+        if(badge){
+          badge.textContent = '✓ schema loaded';
+          badge.style.background = '#1a3a1a';
+          badge.style.color = '#4ec9b0';
+          badge.style.display = '';
+          setTimeout(()=>{ if(badge) badge.style.display='none'; }, 3000);
+        }
+      }
+      // If no match but no error: keep rawAttrs panel as-is
+    }
+  }
+});
+
+render();
+window.addEventListener('resize',fitToWindow);
+
+})();
+</script>
+</body>
+</html>`;
 }

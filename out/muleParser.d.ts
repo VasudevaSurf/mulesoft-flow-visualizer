@@ -20,6 +20,12 @@ export interface FlowStep {
     flowRefTarget?: string;
     /** Shape hint for Mermaid rendering */
     shape: "stadium" | "rect" | "diamond" | "subroutine" | "cylinder";
+    /**
+     * Raw XML attributes from the element (stripped of fast-xml-parser @ prefix).
+     * Keys are attribute names (e.g. "config-ref", "doc:name", "path").
+     * Values are always strings.
+     */
+    rawAttrs: Record<string, string>;
 }
 /** One complete flow/sub-flow/error-handler block */
 export interface ParsedFlow {
@@ -31,6 +37,16 @@ export interface ParsedFlow {
     steps: FlowStep[];
     /** Unique Mermaid subgraph ID */
     subgraphId: string;
+    /**
+     * Inline error-handler block nested inside this flow (if any).
+     * Each entry represents one error-handling strategy
+     * (on-error-propagate / on-error-continue) with its own child steps.
+     */
+    errorHandler?: {
+        type: string;
+        label: string;
+        steps: FlowStep[];
+    }[];
 }
 /** Top-level result returned by parseMuleXml */
 export interface ParseResult {

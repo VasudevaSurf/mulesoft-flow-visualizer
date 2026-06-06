@@ -202,6 +202,16 @@ function tagToStep(tagName, attrs, flowId, index) {
         }
     }
     const nodeId = toNodeId(`${flowId}_step_${index}_${tagName}`);
+    // Build clean rawAttrs: strip fast-xml-parser "@_" prefix, keep string values only
+    const rawAttrs = {};
+    for (const [k, v] of Object.entries(attrs)) {
+        if (k.startsWith('@_')) {
+            const cleanKey = k.slice(2); // remove "@_" prefix
+            if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+                rawAttrs[cleanKey] = String(v);
+            }
+        }
+    }
     return {
         label,
         nodeId,
@@ -210,6 +220,7 @@ function tagToStep(tagName, attrs, flowId, index) {
             ? attrs["@_name"]
             : undefined,
         shape: meta?.shape ?? "rect",
+        rawAttrs,
     };
 }
 // ─── Line-number tracking ──────────────────────────────────────────────────────
@@ -220,20 +231,13 @@ function tagToStep(tagName, attrs, flowId, index) {
  */
 function buildLineMap(xml) {
     const map = new Map();
-    const lines = xml.split("\n");
     // Match opening tags for flow and sub-flow, capturing the name attribute
     const flowPattern = /<(flow|sub-flow)\b[^>]*name\s*=\s*["']([^"']+)["'][^>]*>/gi;
-    let lineIndex = 0;
-    let charOffset = 0;
-    // Walk the raw string character by character to track lines
-    // Re-stringify line positions from regex .index
     const fullText = xml;
-    let match;
-    // Reset lastIndex before each use
     flowPattern.lastIndex = 0;
+    let match;
     while ((match = flowPattern.exec(fullText)) !== null) {
         const charPos = match.index;
-        // Count newlines up to charPos
         const upTo = fullText.substring(0, charPos);
         const line = upTo.split("\n").length; // 1-based
         const key = `${match[1]}::${match[2]}`;
@@ -347,7 +351,49 @@ function parseMuleXml(xmlText) {
             const subgraphId = toNodeId(`${kind}_${name}`);
             const counter = { value: 0 };
             const steps = extractSteps(elem, subgraphId, counter);
-            flows.push({ kind, name, lineNumber, steps, subgraphId });
+            // ── Extract inline <error-handler> nested inside this flow ──────────
+            let errorHandler;
+            if (kind === "flow" || kind === "sub-flow") {
+                const ehRaw = elem["error-handler"];
+                const ehList = Array.isArray(ehRaw) ? ehRaw : ehRaw ? [ehRaw] : [];
+                for (const eh of ehList) {
+                    if (!eh || typeof eh !== "object")
+                        continue;
+                    const ehElem = eh;
+                    if (!errorHandler)
+                        errorHandler = [];
+                    // Each error-handler can contain multiple on-error-propagate / on-error-continue
+                    for (const stratKey of ["on-error-propagate", "on-error-continue"]) {
+                        const stratRaw = ehElem[stratKey];
+                        const stratList = Array.isArray(stratRaw)
+                            ? stratRaw
+                            : stratRaw
+                                ? [stratRaw]
+                                : [];
+                        for (const strat of stratList) {
+                            if (!strat || typeof strat !== "object")
+                                continue;
+                            const stratElem = strat;
+                            const stratType = stratKey;
+                            const docName = stratElem["@_doc:name"];
+                            const errType = stratElem["@_type"];
+                            const stratLabel = docName ||
+                                (errType ? `${stratKey} (${errType})` : stratKey
+                                    .replace(/-/g, " ")
+                                    .replace(/\b\w/g, (c) => c.toUpperCase()));
+                            const stratCounter = { value: counter.value };
+                            const stratSteps = extractSteps(stratElem, `${subgraphId}_err`, stratCounter);
+                            counter.value = stratCounter.value;
+                            errorHandler.push({
+                                type: stratType,
+                                label: stratLabel,
+                                steps: stratSteps,
+                            });
+                        }
+                    }
+                }
+            }
+            flows.push({ kind, name, lineNumber, steps, subgraphId, errorHandler });
         }
     };
     processFlowLike(flowElements, "flow");
