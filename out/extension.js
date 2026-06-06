@@ -65,6 +65,7 @@ let debounceTimer;
 /** Cache: prefix → ops (per open XML file) */
 let currentNamespaces = new Map();
 let currentPomDeps = [];
+let currentPomRepoUrls = [];
 let currentXmlText = "";
 // ─── Activation ───────────────────────────────────────────────────────────────
 function activate(context) {
@@ -146,6 +147,8 @@ function openOrRevealPanel(context) {
         panel = undefined;
         currentFileUri = undefined;
         currentFlows = [];
+        // ── FIX: reset lastRenderedUri so next open always does a full render ──
+        lastRenderedUri = "";
         void vscode.commands.executeCommand("setContext", "mulesoft-flow-visualizer.panelOpen", false);
     }, undefined, context.subscriptions);
     updatePanelFromActiveEditor();
@@ -162,7 +165,7 @@ async function handleSchemaRequest(context, tagName, prefix, rawAttrs, lineNumbe
     let error;
     try {
         if (prefix) {
-            operations = await (0, connectorRegistry_1.getConnectorOperations)(prefix, currentNamespaces, pomDeps, context.globalStorageUri);
+            operations = await (0, connectorRegistry_1.getConnectorOperations)(prefix, currentNamespaces, pomDeps, context.globalStorageUri, currentPomRepoUrls);
             matched = (0, connectorRegistry_1.findOperation)(operations, tagName) ?? null;
         }
     }
@@ -192,8 +195,10 @@ async function ensurePomDeps() {
         return [];
     try {
         const pomText = fs.readFileSync(pomPath, "utf8");
-        currentPomDeps = (0, connectorRegistry_1.parsePomDependencies)(pomText);
-        console.log(`[MuleViz] Found ${currentPomDeps.length} mule-plugin deps in ${pomPath}`);
+        const result = (0, connectorRegistry_1.parsePomDependencies)(pomText);
+        currentPomDeps = result.deps;
+        currentPomRepoUrls = result.repoUrls;
+        console.log(`[MuleViz] Found ${currentPomDeps.length} mule-plugin deps, ${currentPomRepoUrls.length} repos in ${pomPath}`);
     }
     catch (e) {
         console.warn("[MuleViz] Could not read pom.xml:", e);
@@ -226,9 +231,17 @@ function updatePanelFromActiveEditor(force = false) {
         showNoFileMessage();
         return;
     }
+    const newUri = editor.document.uri.toString();
+    // ── FIX: if the file changed (or panel was just created), force a full
+    //         re-render so the webview gets the baked-in FLOWS, not a postMessage
+    //         to an empty webview that has no FLOWS variable yet. ────────────────
+    if (newUri !== lastRenderedUri) {
+        lastRenderedUri = ""; // forces isFirstRender() → true
+        currentPomDeps = []; // reset per-file pom cache
+        currentPomRepoUrls = []; // reset per-file repo cache
+        currentNamespaces = new Map(); // reset per-file namespace cache
+    }
     currentFileUri = editor.document.uri;
-    // Reset per-file caches when file changes
-    currentPomDeps = [];
     updatePanel(editor.document, force);
 }
 function updatePanel(doc, _force = false) {

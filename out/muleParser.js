@@ -159,6 +159,55 @@ const SKIP_TAGS = new Set([
     "ee:transform", // handled separately — don't double-count children
     "doc:documentation",
 ]);
+/**
+ * Recursively walk the parsed XML object and flatten nested child elements
+ * into dot-notation keys in the rawAttrs map.
+ * e.g. <http:response statusCode="#[...]"><http:headers>expr</http:headers></http:response>
+ * becomes: { "http:response.statusCode": "#[...]", "http:response > http:headers": "expr" }
+ */
+function flattenChildren(obj, prefix, out, depth = 0) {
+    if (depth > 4)
+        return; // prevent infinite recursion on deeply nested XML
+    for (const [key, value] of Object.entries(obj)) {
+        // Skip attribute keys (already handled), text nodes, and metadata
+        if (key.startsWith("@_") || key === "#text" || key === ":@")
+            continue;
+        // Skip known container/config tags that aren't properties
+        if (key === "error-handler" || key === "on-error-propagate" || key === "on-error-continue")
+            continue;
+        const items = Array.isArray(value) ? value : [value];
+        for (const item of items) {
+            if (item === null || item === undefined)
+                continue;
+            const childPath = prefix ? `${prefix} > ${key}` : key;
+            if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+                // Leaf text content
+                out[childPath] = String(item).trim();
+            }
+            else if (typeof item === "object") {
+                const child = item;
+                // Extract child's own attributes
+                for (const [ck, cv] of Object.entries(child)) {
+                    if (ck.startsWith("@_")) {
+                        const attrKey = `${childPath}.${ck.slice(2)}`;
+                        if (typeof cv === "string" || typeof cv === "number" || typeof cv === "boolean") {
+                            out[attrKey] = String(cv);
+                        }
+                    }
+                    else if (ck === "#text" && (typeof cv === "string" || typeof cv === "number")) {
+                        // Text content of the child element
+                        const text = String(cv).trim();
+                        if (text.length > 0 && text.length < 500) {
+                            out[childPath] = text;
+                        }
+                    }
+                }
+                // Recurse into child's children
+                flattenChildren(child, childPath, out, depth + 1);
+            }
+        }
+    }
+}
 /** Derive a FlowStep from an XML tag name + attributes object */
 function tagToStep(tagName, attrs, flowId, index) {
     const meta = TAG_META[tagName];
@@ -212,6 +261,9 @@ function tagToStep(tagName, attrs, flowId, index) {
             }
         }
     }
+    // Also extract nested child element properties (MuleSoft config lives here)
+    // e.g. <http:response statusCode="..."><http:headers>expr</http:headers></http:response>
+    flattenChildren(attrs, '', rawAttrs);
     return {
         label,
         nodeId,

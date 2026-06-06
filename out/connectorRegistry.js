@@ -86,26 +86,38 @@ function extractNamespaces(xmlText) {
     return map;
 }
 // ─── pom.xml parsing ──────────────────────────────────────────────────────────
-/** Parse pom.xml and return all dependencies whose classifier is "mule-plugin". */
+/** Parse pom.xml and return mule-plugin dependencies + repository URLs. */
 function parsePomDependencies(pomText) {
     const parser = new fast_xml_parser_1.XMLParser({
         ignoreAttributes: false,
         attributeNamePrefix: "@_",
-        isArray: (n) => ["dependency"].includes(n),
+        isArray: (n) => ["dependency", "repository"].includes(n),
     });
     let pom;
     try {
         pom = parser.parse(pomText);
     }
     catch {
-        return [];
+        return { deps: [], repoUrls: [] };
     }
     const project = pom["project"];
     if (!project)
-        return [];
+        return { deps: [], repoUrls: [] };
+    // ── Extract repositories ──
+    const repoUrls = [];
+    const reposNode = project["repositories"];
+    const rawRepos = reposNode?.["repository"] ?? [];
+    for (const r of rawRepos) {
+        if (!r || typeof r !== "object")
+            continue;
+        const url = String(r["url"] ?? "").trim();
+        if (url)
+            repoUrls.push(url.endsWith("/") ? url : url + "/");
+    }
+    // ── Extract dependencies ──
     const depsNode = project["dependencies"];
     const rawDeps = depsNode?.["dependency"] ?? [];
-    const result = [];
+    const deps = [];
     for (const d of rawDeps) {
         if (!d || typeof d !== "object")
             continue;
@@ -122,10 +134,10 @@ function parsePomDependencies(pomText) {
             version = String(props[propName] ?? version).trim();
         }
         if (groupId && artifactId && version) {
-            result.push({ groupId, artifactId, version });
+            deps.push({ groupId, artifactId, version });
         }
     }
-    return result;
+    return { deps, repoUrls };
 }
 // ─── Namespace → dependency matching ─────────────────────────────────────────
 /**
@@ -149,12 +161,19 @@ function matchDepToPrefix(prefix, namespaceUri, deps) {
     }
     return undefined;
 }
-// ─── Maven Central download ───────────────────────────────────────────────────
-function mavenCentralUrl(dep) {
+// ─── Maven repository download ────────────────────────────────────────────────
+/** Build the JAR URL for a given Maven repo base URL. */
+function mavenJarUrl(repoBase, dep) {
     const g = dep.groupId.replace(/\./g, "/");
-    return (`https://repo1.maven.org/maven2/${g}/${dep.artifactId}/${dep.version}/` +
-        `${dep.artifactId}-${dep.version}-mule-plugin.jar`);
+    const base = repoBase.endsWith("/") ? repoBase : repoBase + "/";
+    return `${base}${g}/${dep.artifactId}/${dep.version}/${dep.artifactId}-${dep.version}-mule-plugin.jar`;
 }
+/** Well-known MuleSoft Maven repositories (tried as fallbacks). */
+const MULESOFT_REPOS = [
+    "https://repository.mulesoft.org/releases/",
+    "https://repository.mulesoft.org/nexus/content/repositories/public/",
+    "https://maven.anypoint.mulesoft.com/api/v3/maven/",
+];
 /** Download url → dest file, following redirects. Returns false on HTTP error. */
 function downloadToFile(url, dest) {
     return new Promise((resolve) => {
@@ -184,8 +203,9 @@ function downloadToFile(url, dest) {
         attempt(url);
     });
 }
-/** Return local JAR path (downloading + caching if needed). */
-async function getOrDownloadJar(dep, storageUri) {
+/** Return local JAR path (downloading + caching if needed).
+ *  Tries Maven Central first, then pom.xml repos, then well-known MuleSoft repos. */
+async function getOrDownloadJar(dep, storageUri, pomRepoUrls = []) {
     const key = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
     if (dlPromises.has(key))
         return dlPromises.get(key);
@@ -196,19 +216,46 @@ async function getOrDownloadJar(dep, storageUri) {
         const jarPath = path.join(dir, jarName);
         if (fs.existsSync(jarPath))
             return jarPath; // already cached
-        const url = mavenCentralUrl(dep);
-        const bar = vscode.window.setStatusBarMessage(`⬇ Downloading ${dep.artifactId} ${dep.version} from Maven Central…`);
-        const ok = await downloadToFile(url, jarPath);
-        bar.dispose();
-        if (!ok) {
-            if (fs.existsSync(jarPath))
-                fs.unlinkSync(jarPath); // remove partial
-            vscode.window.showWarningMessage(`[MuleViz] Could not download ${dep.artifactId} ${dep.version} from Maven Central. ` +
-                `It may be a private/MuleSoft-hosted connector.`);
-            return null;
+        // Build ordered list of repo URLs to try:
+        // 1. Maven Central  2. pom.xml repos  3. Well-known MuleSoft repos
+        const allRepos = [
+            "https://repo1.maven.org/maven2/",
+            ...pomRepoUrls,
+            ...MULESOFT_REPOS,
+        ];
+        // Deduplicate
+        const seen = new Set();
+        const uniqueRepos = allRepos.filter((r) => {
+            const norm = r.replace(/\/+$/, "");
+            if (seen.has(norm))
+                return false;
+            seen.add(norm);
+            return true;
+        });
+        for (const repoUrl of uniqueRepos) {
+            const url = mavenJarUrl(repoUrl, dep);
+            const repoName = repoUrl.includes("mulesoft") || repoUrl.includes("anypoint")
+                ? "MuleSoft repo" : repoUrl.includes("maven.org") ? "Maven Central" : repoUrl;
+            const bar = vscode.window.setStatusBarMessage(`⬇ Downloading ${dep.artifactId} ${dep.version} from ${repoName}…`);
+            console.log(`[MuleViz] Trying: ${url}`);
+            const ok = await downloadToFile(url, jarPath);
+            bar.dispose();
+            if (ok) {
+                vscode.window.setStatusBarMessage(`✓ ${dep.artifactId} cached from ${repoName}`, 4000);
+                return jarPath;
+            }
+            // Clean up partial file before trying next repo
+            if (fs.existsSync(jarPath)) {
+                try {
+                    fs.unlinkSync(jarPath);
+                }
+                catch { /* ignore */ }
+            }
         }
-        vscode.window.setStatusBarMessage(`✓ ${dep.artifactId} cached`, 4000);
-        return jarPath;
+        // All repos failed
+        vscode.window.showWarningMessage(`[MuleViz] Could not download ${dep.artifactId} ${dep.version} from any repository. ` +
+            `Tried ${uniqueRepos.length} repos.`);
+        return null;
     };
     const p = doDownload();
     dlPromises.set(key, p);
@@ -482,14 +529,14 @@ function parseAnnotationsJson(json) {
  * Full pipeline: given a namespace prefix and all context, return OperationDef[].
  * Downloads and caches the JAR the first time.
  */
-async function getConnectorOperations(prefix, namespaces, pomDeps, storageUri) {
+async function getConnectorOperations(prefix, namespaces, pomDeps, storageUri, pomRepoUrls = []) {
     if (opsByPrefix.has(prefix))
         return opsByPrefix.get(prefix);
     const nsUri = namespaces.get(prefix) ?? "";
     const dep = matchDepToPrefix(prefix, nsUri, pomDeps);
     if (!dep)
         return [];
-    const jarPath = await getOrDownloadJar(dep, storageUri);
+    const jarPath = await getOrDownloadJar(dep, storageUri, pomRepoUrls);
     if (!jarPath)
         return [];
     return extractOperations(jarPath, prefix);

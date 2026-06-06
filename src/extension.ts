@@ -27,6 +27,7 @@ import {
   findOperation,
   ConnectorDep,
   OperationDef,
+  PomParseResult,
 } from "./connectorRegistry";
 
 // ─── Module-level state ────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** Cache: prefix → ops (per open XML file) */
 let currentNamespaces = new Map<string, string>();
 let currentPomDeps: ConnectorDep[] = [];
+let currentPomRepoUrls: string[] = [];
 let currentXmlText = "";
 
 // ─── Activation ───────────────────────────────────────────────────────────────
@@ -152,6 +154,8 @@ function openOrRevealPanel(context: vscode.ExtensionContext): void {
       panel = undefined;
       currentFileUri = undefined;
       currentFlows = [];
+      // ── FIX: reset lastRenderedUri so next open always does a full render ──
+      lastRenderedUri = "";
       void vscode.commands.executeCommand("setContext", "mulesoft-flow-visualizer.panelOpen", false);
     },
     undefined,
@@ -186,7 +190,8 @@ async function handleSchemaRequest(
         prefix,
         currentNamespaces,
         pomDeps,
-        context.globalStorageUri
+        context.globalStorageUri,
+        currentPomRepoUrls
       );
       matched = findOperation(operations, tagName) ?? null;
     }
@@ -218,9 +223,11 @@ async function ensurePomDeps(): Promise<ConnectorDep[]> {
 
   try {
     const pomText = fs.readFileSync(pomPath, "utf8");
-    currentPomDeps = parsePomDependencies(pomText);
+    const result = parsePomDependencies(pomText);
+    currentPomDeps = result.deps;
+    currentPomRepoUrls = result.repoUrls;
     console.log(
-      `[MuleViz] Found ${currentPomDeps.length} mule-plugin deps in ${pomPath}`
+      `[MuleViz] Found ${currentPomDeps.length} mule-plugin deps, ${currentPomRepoUrls.length} repos in ${pomPath}`
     );
   } catch (e) {
     console.warn("[MuleViz] Could not read pom.xml:", e);
@@ -249,9 +256,20 @@ function updatePanelFromActiveEditor(force = false): void {
   const editor = vscode.window.activeTextEditor;
   if (!editor) { showNoFileMessage(); return; }
   if (!isMuleXml(editor.document)) { showNoFileMessage(); return; }
+
+  const newUri = editor.document.uri.toString();
+
+  // ── FIX: if the file changed (or panel was just created), force a full
+  //         re-render so the webview gets the baked-in FLOWS, not a postMessage
+  //         to an empty webview that has no FLOWS variable yet. ────────────────
+  if (newUri !== lastRenderedUri) {
+    lastRenderedUri = "";          // forces isFirstRender() → true
+    currentPomDeps = [];           // reset per-file pom cache
+    currentPomRepoUrls = [];       // reset per-file repo cache
+    currentNamespaces = new Map(); // reset per-file namespace cache
+  }
+
   currentFileUri = editor.document.uri;
-  // Reset per-file caches when file changes
-  currentPomDeps = [];
   updatePanel(editor.document, force);
 }
 
@@ -292,10 +310,10 @@ function updatePanel(doc: vscode.TextDocument, _force = false): void {
     steps: f.steps.map(serializeStep),
     errorHandler: f.errorHandler
       ? f.errorHandler.map((eh) => ({
-          type: eh.type,
-          label: eh.label,
-          steps: eh.steps.map(serializeStep),
-        }))
+        type: eh.type,
+        label: eh.label,
+        steps: eh.steps.map(serializeStep),
+      }))
       : null,
   }));
 
@@ -320,7 +338,7 @@ function updatePanel(doc: vscode.TextDocument, _force = false): void {
 
 let lastRenderedUri = "";
 function isFirstRender() { return (currentFileUri?.toString() ?? "") !== lastRenderedUri; }
-function markRendered()   { lastRenderedUri = currentFileUri?.toString() ?? ""; }
+function markRendered() { lastRenderedUri = currentFileUri?.toString() ?? ""; }
 
 // ─── Jump-to-line ─────────────────────────────────────────────────────────────
 

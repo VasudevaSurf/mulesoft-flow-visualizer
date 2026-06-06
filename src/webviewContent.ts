@@ -273,17 +273,25 @@ ${warningBanner}
 (function(){
 'use strict';
 
-// ── Global error guard (shows errors on canvas instead of silent blank) ────────
+// ── Show errors on canvas instead of failing silently ─────────────────────────
 window.onerror = function(msg, src, line, col, err){
-  const cw = document.getElementById('cw') || document.body;
-  const d = document.createElement('div');
-  d.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:12px;background:#4a1010;color:#f48771;font-family:monospace;font-size:11px;z-index:999;white-space:pre-wrap;border:1px solid #c0392b';
-  d.textContent = 'MuleViz Script Error (line ' + line + '): ' + msg + (err ? '\\n' + err.stack : '');
-  cw.appendChild(d);
+  var c = document.getElementById('cw') || document.body;
+  var d = document.createElement('div');
+  d.style.cssText = 'position:absolute;top:8px;left:8px;right:8px;padding:12px;background:#4a1010;color:#f48771;font-family:monospace;font-size:11px;z-index:999;white-space:pre-wrap;border:1px solid #c0392b;border-radius:4px';
+  d.textContent = 'MuleViz Error (line ' + line + '): ' + msg;
+  c.appendChild(d);
+  return true;
 };
 
-const FLOWS = ${flowsJson};
-const vscode = acquireVsCodeApi();
+// ── Parse FLOWS from base64-encoded JSON ──────────────────────────────────────
+var FLOWS;
+try {
+  FLOWS = JSON.parse(atob('${Buffer.from(flowsJson).toString("base64")}'));
+} catch(e) {
+  FLOWS = [];
+}
+var vscode = acquireVsCodeApi();
+
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W      = 120;
@@ -324,22 +332,25 @@ const C = {
 const SCHEMA = {
   // ── HTTP ──
   'http:listener': {
-    'General':       ['doc:name','config-ref','path','allowedMethods'],
-    'Response':      ['outputMimeType','encoding'],
-    'Advanced':      ['primaryNodeOnly','responseStreamingMode'],
+    'General':         ['doc:name','doc:id','config-ref','path','allowedMethods'],
+    'Response':        ['http:response.statusCode','http:response > http:headers','http:response > http:body','outputMimeType','encoding'],
+    'Error Response':  ['http:error-response.statusCode','http:error-response > http:body','http:error-response > http:headers'],
+    'Advanced':        ['primaryNodeOnly','responseStreamingMode'],
   },
   'http:request': {
-    'General':       ['doc:name','config-ref','method','path'],
-    'Query Params':  ['queryParams'],
-    'Headers':       ['headers'],
-    'Body':          ['body'],
-    'Advanced':      ['outputMimeType','encoding','followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
+    'General':         ['doc:name','doc:id','config-ref','method','path','url'],
+    'Request':         ['http:body','http:headers','http:query-params','http:uri-params'],
+    'Response':        ['outputMimeType','encoding'],
+    'Advanced':        ['followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
   },
   'https:listener': {
-    'General':       ['doc:name','config-ref','path','allowedMethods'],
+    'General':         ['doc:name','config-ref','path','allowedMethods'],
+    'Response':        ['http:response.statusCode','http:response > http:headers'],
+    'Advanced':        ['primaryNodeOnly','responseStreamingMode'],
   },
   'https:request': {
-    'General':       ['doc:name','config-ref','method','path'],
+    'General':         ['doc:name','config-ref','method','path'],
+    'Advanced':        ['followRedirects','sendBodyMode','requestStreamingMode','responseTimeout','target','targetValue'],
   },
 
   // ── Core ──
@@ -393,11 +404,21 @@ const SCHEMA = {
 
   // ── DataWeave / Transform ──
   'ee:transform': {
-    'General':       ['doc:name'],
+    'General':       ['doc:name','doc:id'],
+    'Payload':       ['ee:message > ee:set-payload'],
+    'Variables':     ['ee:variables > ee:set-variable'],
     'Advanced':      ['mode'],
   },
   'dw:transform-message': {
     'General':       ['doc:name'],
+  },
+
+  // ── APIkit ──
+  'apikit:router': {
+    'General':       ['doc:name','config-ref'],
+  },
+  'apikit:console': {
+    'General':       ['doc:name','config-ref'],
   },
 
   // ── Database ──
@@ -656,13 +677,15 @@ const SCHEMA = {
 
 // ── Pretty-print attribute key ─────────────────────────────────────────────────
 function friendlyKey(k){
-  // Convert camelCase, kebab-case, colon-separated to Title Case
-  return k
-    .replace(/^doc:/,'')
-    .replace(/^@_/,'')
+  // Strip namespace prefixes (e.g. 'http:response' → 'response', 'ee:set-payload' → 'set-payload')
+  var cleaned = k.replace(/[a-z]+:/g, '');
+  // Convert separators: ' > ' → ' ', '.' → ' '
+  cleaned = cleaned.replace(/\s*>\s*/g, ' ').replace(/\./g, ' ');
+  // Convert camelCase + kebab-case to Title Case
+  return cleaned
     .replace(/([a-z])([A-Z])/g,'$1 $2')
-    .replace(/[-:]/g,' ')
-    .replace(/\b\w/g,c=>c.toUpperCase())
+    .replace(/[-]/g,' ')
+    .replace(/\b\w/g,function(c){return c.toUpperCase()})
     .trim();
 }
 
@@ -672,18 +695,18 @@ function buildPropGroups(tagName, rawAttrs){
   const claimed = new Set();
   const groups = [];
 
-  // schema-defined groups
+  // schema-defined groups — show ALL defined keys, even if empty
   for(const [grpLabel, keys] of Object.entries(schema)){
     const rows = [];
     for(const k of keys){
       claimed.add(k);
-      const v = rawAttrs[k];
-      if(v !== undefined && v !== null && v !== '') rows.push({k,v});
+      const v = rawAttrs[k] || '';
+      rows.push({k, v});
     }
     if(rows.length) groups.push({label:grpLabel, rows});
   }
 
-  // "Other" group: any attrs not in schema
+  // "Other" group: any attrs not in schema (includes nested child properties)
   const otherRows = [];
   for(const [k,v] of Object.entries(rawAttrs)){
     if(!claimed.has(k) && k !== 'name' && v !== undefined && v !== '') {
@@ -847,9 +870,9 @@ function makeSchemaRow(k,v,param){
   row.className='prop-row'+(param&&param.required&&isEmpty?' row-missing':'');
   const kEl=document.createElement('div'); kEl.className='prop-key';
   kEl.innerHTML=friendlyKey(k)
-    +(param&&param.type?' <span class=\\"type-badge\\">'+escHtml(param.type)+'</span>':'')
+    +(param&&param.type?' <span class="type-badge">'+escHtml(param.type)+'</span>':'')
     +(param&&param.required?' <span class="req-badge">*</span>':'');
-  kEl.title=k+(param&&param.allowedValues?'\nAllowed: '+param.allowedValues.join(', '):'');
+  kEl.title=k+(param&&param.allowedValues?'\\nAllowed: '+param.allowedValues.join(', '):'');
   row.appendChild(kEl); row.appendChild(makeValueEl(v,param)); return row;
 }
 
@@ -1262,7 +1285,13 @@ window.addEventListener('message',e=>{
   }
 });
 
-render();
+try { render(); } catch(e) {
+  var c = document.getElementById('cw') || document.body;
+  var d = document.createElement('div');
+  d.style.cssText = 'position:absolute;top:8px;left:8px;right:8px;padding:12px;background:#4a1010;color:#f48771;font-family:monospace;font-size:11px;z-index:999;white-space:pre-wrap;border:1px solid #c0392b;border-radius:4px';
+  d.textContent = 'render() crashed: ' + (e.stack || e.message || e);
+  c.appendChild(d);
+}
 window.addEventListener('resize',fitToWindow);
 
 })();
