@@ -3,7 +3,7 @@
   "displayName": "MuleSoft Multi-Flow Visualizer",
   "description": "Renders a unified, stacked visual canvas of all flows, sub-flows, and error handlers in a Mule XML file — just like Anypoint Studio.",
   "version": "1.0.0",
-  "publisher": "your-publisher-id",
+  "publisher": "vasudev-mule",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -25,6 +25,10 @@
     "onLanguage:xml",
     "workspaceContains:**/*.xml"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VasudevaSurf/mulesoft-flow-visualizer"
+  },
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
