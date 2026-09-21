@@ -3,31 +3,48 @@
  *
  * Responsible for:
  *  1. Parsing a raw Mule XML string into a structured intermediate representation (IR).
- *  2. Converting that IR into a Mermaid.js flowchart string.
+ *  2. The IR is a TREE — each FlowNode can have children (scopes) or branches
+ *     (routers / parallel routes), all inferred dynamically from the XML structure.
  *
- * The IR is designed to be serialisation-friendly so it can be passed directly
- * to the Webview via postMessage without any circular references.
+ * Layout detection is DYNAMIC:
+ *  - Element has <when>/<otherwise> children → "router" (e.g. choice)
+ *  - Element has <route> children → "parallel" (e.g. scatter-gather)
+ *  - Element has processor children → "scope" (e.g. try, foreach, async)
+ *  - Otherwise → "leaf" (e.g. logger, http:request)
  */
-/** A single processor step inside a flow */
+/** A single processor step inside a flow (base fields) */
 export interface FlowStep {
-    /** Human-readable label shown in the diagram node */
     label: string;
-    /** Unique node ID used in Mermaid syntax (no spaces, no special chars) */
     nodeId: string;
-    /** The raw XML tag name, e.g. "http:listener", "ee:transform" */
     tagName: string;
-    /** Optional target when the step is a <flow-ref> */
     flowRefTarget?: string;
-    /** Shape hint for Mermaid rendering */
     shape: "stadium" | "rect" | "diamond" | "subroutine" | "cylinder";
-    /**
-     * Raw XML attributes from the element (stripped of fast-xml-parser @ prefix).
-     * Keys are attribute names (e.g. "config-ref", "doc:name", "path").
-     * Values are always strings.
-     */
     rawAttrs: Record<string, string>;
-    /** 1-based line number of the tag inside the XML document */
     lineNumber?: number;
+}
+/** A branch inside a router or parallel container */
+export interface FlowBranch {
+    /** Display label for the branch (e.g. "when: #[payload.type == 'A']" or "Route 1") */
+    label: string;
+    /** The expression/condition for when elements */
+    condition?: string;
+    /** Processor children inside this branch */
+    children: FlowNode[];
+}
+/** A node in the flow tree — extends FlowStep with tree structure */
+export interface FlowNode extends FlowStep {
+    /**
+     * How this node should be laid out, inferred dynamically:
+     *  - "leaf"     → simple node box
+     *  - "scope"    → container with children laid out horizontally inside
+     *  - "router"   → has when/otherwise branches stacked vertically
+     *  - "parallel" → has route branches rendered as parallel lanes
+     */
+    layoutHint: "leaf" | "scope" | "router" | "parallel";
+    /** Child processor nodes (for scopes) */
+    children: FlowNode[];
+    /** Branches (for routers and parallel containers) */
+    branches?: FlowBranch[];
 }
 export interface ChildFieldDef {
     key: string;
@@ -42,29 +59,23 @@ export interface ChildFieldDef {
 }
 /** One complete flow/sub-flow/error-handler block */
 export interface ParsedFlow {
-    /** "flow" | "sub-flow" | "error-handler" */
     kind: "flow" | "sub-flow" | "error-handler";
     name: string;
-    /** 1-based line number of the opening tag in the source XML */
     lineNumber: number;
-    steps: FlowStep[];
-    /** Unique Mermaid subgraph ID */
+    /** Tree of processor nodes — replaces the old flat steps array */
+    rootNodes: FlowNode[];
+    /** Alias for rootNodes for backwards compatibility */
+    steps?: FlowNode[];
     subgraphId: string;
-    /**
-     * Inline error-handler block nested inside this flow (if any).
-     * Each entry represents one error-handling strategy
-     * (on-error-propagate / on-error-continue) with its own child steps.
-     */
     errorHandler?: {
         type: string;
         label: string;
-        steps: FlowStep[];
+        steps: FlowNode[];
     }[];
 }
 /** Top-level result returned by parseMuleXml */
 export interface ParseResult {
     flows: ParsedFlow[];
-    /** Non-fatal warnings to surface in the UI */
     warnings: string[];
 }
 interface TagMeta {
@@ -76,29 +87,13 @@ interface TagMeta {
     requiredAttrs?: string[];
 }
 /**
- * Maps well-known Mule XML tag names (namespace:localName) to a friendly
- * display label and a Mermaid node shape.
- *
- * "stadium"    → rounded pill  ([text])
- * "rect"       → rectangle     [text]
- * "diamond"    → decision      {text}
- * "subroutine" → subprocess    [[text]]
- * "cylinder"   → DB / store    [(text)]
+ * Maps well-known Mule XML tag names to a friendly label and Mermaid shape.
+ * This is used as a HINT for display — structural layout is inferred dynamically.
  */
 export declare const TAG_META: Record<string, TagMeta>;
 export declare const CHILD_SCHEMA: Record<string, ChildFieldDef[]>;
-/**
- * Parse a Mule XML string into a ParseResult.
- *
- * @param xmlText - Raw content of the .xml file
- */
 export declare function parseMuleXml(xmlText: string): ParseResult;
-/**
- * Convert a list of ParsedFlow objects into a complete Mermaid diagram string.
- *
- * @param flows   - The flows to render
- * @param theme   - Mermaid theme name
- */
-export declare function generateMermaidDiagram(flows: ParsedFlow[], theme?: string): string;
+/** Recursively count all FlowNodes in a tree (for display in the sidebar) */
+export declare function countAllNodes(nodes: FlowNode[]): number;
 export {};
 //# sourceMappingURL=muleParser.d.ts.map

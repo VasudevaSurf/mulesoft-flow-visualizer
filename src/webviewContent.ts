@@ -41,44 +41,72 @@ function escapeHtml(text: string): string {
 export function getWebviewContent(opts: WebviewContentOptions): string {
   const { flows, nonce, warnings } = opts;
 
-  const serializeStep = (s: any) => ({
-    label: s.label,
-    nodeId: s.nodeId,
-    tagName: s.tagName,
-    shape: s.shape,
-    flowRefTarget: s.flowRefTarget || null,
-    rawAttrs: s.rawAttrs || {},
-    lineNumber: s.lineNumber,
+  const serializeNode = (n: any): any => ({
+    label: n.label,
+    nodeId: n.nodeId,
+    tagName: n.tagName,
+    shape: n.shape,
+    layoutHint: n.layoutHint,
+    flowRefTarget: n.flowRefTarget || null,
+    rawAttrs: n.rawAttrs || {},
+    lineNumber: n.lineNumber,
+    children: (n.children || []).map(serializeNode),
+    branches: n.branches
+      ? n.branches.map((b: any) => ({
+          label: b.label,
+          condition: b.condition,
+          children: (b.children || []).map(serializeNode),
+        }))
+      : undefined,
   });
 
   const flowsJson = JSON.stringify(
-    flows.map((f) => ({
-      kind: f.kind,
-      name: f.name,
-      lineNumber: f.lineNumber,
-      subgraphId: f.subgraphId,
-      steps: f.steps.map(serializeStep),
-      errorHandler: f.errorHandler
-        ? f.errorHandler.map((eh) => ({
-            type: eh.type,
-            label: eh.label,
-            steps: eh.steps.map(serializeStep),
-          }))
-        : null,
-    }))
+    flows.map((f) => {
+      const nodes = (f.rootNodes || f.steps || []).map(serializeNode);
+      return {
+        kind: f.kind,
+        name: f.name,
+        lineNumber: f.lineNumber,
+        subgraphId: f.subgraphId,
+        rootNodes: nodes,
+        steps: nodes,
+        errorHandler: f.errorHandler
+          ? f.errorHandler.map((eh) => ({
+              type: eh.type,
+              label: eh.label,
+              steps: (eh.steps || []).map(serializeNode),
+            }))
+          : null,
+      };
+    })
   );
+
+  const countNodes = (nodes: any[]): number => {
+    let count = 0;
+    for (const n of nodes) {
+      count++;
+      if (n.children && n.children.length) count += countNodes(n.children);
+      if (n.branches && n.branches.length) {
+        for (const b of n.branches) {
+          if (b.children && b.children.length) count += countNodes(b.children);
+        }
+      }
+    }
+    return count;
+  };
 
   const flowListItems = flows
     .map((f) => {
       const icon = f.kind === "flow" ? "🔵" : f.kind === "sub-flow" ? "🟡" : "🔴";
       const kindLabel = f.kind === "flow" ? "Flow" : f.kind === "sub-flow" ? "Sub-Flow" : "Error Handler";
+      const totalSteps = countNodes(f.rootNodes || f.steps || []);
       return `<li class="flow-item" data-line="${f.lineNumber}" data-subgraph="${f.subgraphId}" title="Jump to line ${f.lineNumber}">
         <span class="fi">${icon}</span>
         <div class="fd">
           <span class="fk">${kindLabel}</span>
           <span class="fn">${escapeHtml(f.name)}</span>
         </div>
-        <span class="fs">${f.steps.length}s</span>
+        <span class="fs">${totalSteps}s</span>
       </li>`;
     })
     .join("\n");
@@ -1315,10 +1343,61 @@ function drawPlusButton(parent, cx, cy, flow, step) {
   });
 }
 
+// ── Tree-aware Layout & Measurements ─────────────────────────────────────────
+const CONTAINER_PAD_H = 16;
+const CONTAINER_PAD_V = 12;
+const CONTAINER_HDR_H = 22;
+const BRANCH_GAP = 14;
+const BRANCH_LABEL_W = 100;
+const BRANCH_LABEL_H = 22;
+
+function measureNode(node) {
+  if (!node) return { w: NODE_W, h: NODE_H };
+  if (node.layoutHint === 'scope') {
+    const children = node.children || [];
+    const childrenSize = children.length ? measureSequence(children) : { w: 80, h: NODE_H };
+    const w = Math.max(CONTAINER_PAD_H * 2 + childrenSize.w, 160);
+    const h = CONTAINER_HDR_H + CONTAINER_PAD_V * 2 + childrenSize.h;
+    return { w, h };
+  }
+  if (node.layoutHint === 'router' || node.layoutHint === 'parallel') {
+    const branches = node.branches || [];
+    if (!branches.length) {
+      return { w: 220, h: CONTAINER_HDR_H + CONTAINER_PAD_V * 2 + NODE_H };
+    }
+    let maxBranchContentW = 80;
+    let totalBranchesH = 0;
+    for (let b of branches) {
+      const bChildren = b.children || [];
+      const bSize = bChildren.length ? measureSequence(bChildren) : { w: 60, h: NODE_H };
+      maxBranchContentW = Math.max(maxBranchContentW, bSize.w);
+      const bH = Math.max(bSize.h, BRANCH_LABEL_H + 12);
+      totalBranchesH += bH;
+    }
+    totalBranchesH += Math.max(0, branches.length - 1) * BRANCH_GAP;
+    const w = Math.max(CONTAINER_PAD_H * 2 + 20 + BRANCH_LABEL_W + NODE_GAP + maxBranchContentW + 24, 240);
+    const h = CONTAINER_HDR_H + CONTAINER_PAD_V * 2 + totalBranchesH;
+    return { w, h };
+  }
+  return { w: NODE_W, h: NODE_H };
+}
+
+function measureSequence(nodes) {
+  if (!nodes || !nodes.length) return { w: 0, h: NODE_H };
+  let totalW = 0;
+  let maxH = NODE_H;
+  for (let i = 0; i < nodes.length; i++) {
+    const size = measureNode(nodes[i]);
+    totalW += size.w;
+    maxH = Math.max(maxH, size.h);
+  }
+  totalW += Math.max(0, nodes.length - 1) * NODE_GAP;
+  return { w: totalW, h: maxH };
+}
+
 // ── Error-section sizing ──────────────────────────────────────────────────────
 function errorSectionHeight(flow){
   if(!flow.errorHandler||!flow.errorHandler.length) {
-    // Reserve space for the "+Error Handler" button (only for flows/sub-flows)
     if (flow.kind === 'flow' || flow.kind === 'sub-flow') {
       return EH_DIVIDER + 24;
     }
@@ -1328,7 +1407,17 @@ function errorSectionHeight(flow){
     return EH_DIVIDER + EH_HDR;
   }
   let h = EH_DIVIDER + EH_HDR;
-  for(const s of flow.errorHandler) h += EH_HDR + EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
+  for(const s of flow.errorHandler) {
+    const stratNodes = s.steps || [];
+    let stratH = MINI_H;
+    for (const n of stratNodes) {
+      if (n.layoutHint && n.layoutHint !== 'leaf') {
+        const sz = measureNode(n);
+        stratH = Math.max(stratH, sz.h);
+      }
+    }
+    h += EH_HDR + EH_PAD_V + stratH + EH_PAD_V + EH_STRAT_GAP;
+  }
   h += 24; // space for "+ Error Strategy" button
   return h;
 }
@@ -1337,26 +1426,32 @@ function flowSize(flow){
   if(collapsedFlows.has(flow.subgraphId)){
     return {w:200, h:FLOW_HDR};
   }
-  const n = Math.max(flow.steps.length,1);
-  const mainW = n*NODE_W + Math.max(0,n-1)*NODE_GAP + FLOW_PAD_H*2 + (flow.steps.length ? 40 : 0);
+  const nodes = flow.rootNodes || flow.steps || [];
+  const seqSize = measureSequence(nodes);
+  const mainW = Math.max(seqSize.w + FLOW_PAD_H*2 + (nodes.length ? 40 : 0), 220);
   let errW = 0;
   if(flow.errorHandler && !collapsedFlows.has(flow.subgraphId + '_err')){
     for(const strat of flow.errorHandler){
-      const m = Math.max(strat.steps.length,1);
-      errW = Math.max(errW, FLOW_PAD_H + m*MINI_W + Math.max(0,m-1)*MINI_GAP + FLOW_PAD_H + (strat.steps.length ? 30 : 0));
+      const stratNodes = strat.steps || [];
+      let stratRowW = 0;
+      for (let i = 0; i < stratNodes.length; i++) {
+        const sz = stratNodes[i].layoutHint && stratNodes[i].layoutHint !== 'leaf' ? measureNode(stratNodes[i]) : { w: MINI_W, h: MINI_H };
+        stratRowW += sz.w;
+      }
+      stratRowW += Math.max(0, stratNodes.length - 1) * MINI_GAP;
+      errW = Math.max(errW, FLOW_PAD_H + stratRowW + FLOW_PAD_H + (stratNodes.length ? 30 : 0));
     }
   }
-  const cw = Math.max(mainW, errW, 200);
-  const mainH = FLOW_HDR + FLOW_PAD_V + NODE_H + FLOW_PAD_V;
+  const cw = Math.max(mainW, errW, 220);
+  const mainH = FLOW_HDR + FLOW_PAD_V + seqSize.h + FLOW_PAD_V;
   return {w:cw, h:mainH + errorSectionHeight(flow)};
 }
 
 // ── Draw error-handler section ────────────────────────────────────────────────
-function drawErrorSection(parent, flow, flowW, mainH){
+function drawErrorSection(parent, flow, flowW, mainH, flowAbsX, flowAbsY){
   let curY = mainH + EH_DIVIDER;
   const hasEH = flow.errorHandler && flow.errorHandler.length;
   if (!hasEH && (flow.kind === 'flow' || flow.kind === 'sub-flow')) {
-    // Draw a subtle "+Error Handler" button at the bottom of the flow
     const btnG = svgEl('g', { cursor: 'pointer' }, parent);
     const btnX = 10;
     const btnY = curY + 2;
@@ -1429,39 +1524,55 @@ function drawErrorSection(parent, flow, flowW, mainH){
       sl.textContent = trunc(strat.label, flowW-20);
       curY += EH_HDR;
 
+      const stratNodes = strat.steps || [];
+      let stratRowH = MINI_H;
+      for (const n of stratNodes) {
+        if (n.layoutHint && n.layoutHint !== 'leaf') {
+          const sz = measureNode(n);
+          stratRowH = Math.max(stratRowH, sz.h);
+        }
+      }
       const nodesY = curY + EH_PAD_V;
-      if(!strat.steps.length){
-        const ep = svgEl('text',{x:FLOW_PAD_H,y:nodesY+MINI_H/2,'dominant-baseline':'middle',
+      if(!stratNodes.length){
+        const ep = svgEl('text',{x:FLOW_PAD_H,y:nodesY+stratRowH/2,'dominant-baseline':'middle',
           fill:'#555','font-size':10,style:'pointer-events:none'},parent);
         ep.textContent='Empty handler';
       } else {
-        strat.steps.forEach((step,i)=>{
-          const nx = FLOW_PAD_H + i*(MINI_W+MINI_GAP);
-          drawMiniNode(parent, step, nx, nodesY, flow.lineNumber);
-          if(i<strat.steps.length-1){
-            const ay = nodesY+MINI_H/2;
-            svgEl('line',{x1:nx+MINI_W,y1:ay,x2:FLOW_PAD_H+(i+1)*(MINI_W+MINI_GAP)-2,y2:ay,
+        let curNx = FLOW_PAD_H;
+        stratNodes.forEach((step,i)=>{
+          const isComplex = step.layoutHint && step.layoutHint !== 'leaf';
+          const sz = isComplex ? measureNode(step) : { w: MINI_W, h: MINI_H };
+          const stepY = nodesY + (stratRowH - sz.h) / 2;
+          if (isComplex) {
+            drawFlowNode(parent, step, curNx, stepY, flow, flow.lineNumber, flowAbsX + curNx, flowAbsY + stepY);
+          } else {
+            drawMiniNode(parent, step, curNx, stepY, flow.lineNumber);
+            nodePosMap.set(step.nodeId, { absX: flowAbsX + curNx, absY: flowAbsY + stepY, w: MINI_W, h: MINI_H, node: step, flow });
+          }
+          if(i<stratNodes.length-1){
+            const ay = nodesY+stratRowH/2;
+            svgEl('line',{x1:curNx+sz.w,y1:ay,x2:curNx+sz.w+MINI_GAP-2,y2:ay,
               stroke:C.errHdr,'stroke-width':1.2,'marker-end':'url(#arr)'},parent);
             
-            const cx = nx + MINI_W + MINI_GAP / 2;
+            const cx = curNx + sz.w + MINI_GAP / 2;
             drawPlusButton(parent, cx, ay, flow, step);
           }
           
-          if (i === strat.steps.length - 1) {
-            const ay = nodesY + MINI_H / 2;
-            const lx1 = nx + MINI_W;
+          if (i === stratNodes.length - 1) {
+            const ay = nodesY + stratRowH / 2;
+            const lx1 = curNx + sz.w;
             const lx2 = lx1 + MINI_GAP / 2;
             svgEl('line', { x1: lx1, y1: ay, x2: lx2 - 2, y2: ay, stroke: C.errHdr, 'stroke-width': 1.2, 'marker-end': 'url(#arr)' }, parent);
             
             const cx = lx2 + 8;
             drawPlusButton(parent, cx, ay, flow, step);
           }
+          curNx += sz.w + MINI_GAP;
         });
       }
-      curY += EH_PAD_V + MINI_H + EH_PAD_V + EH_STRAT_GAP;
+      curY += EH_PAD_V + stratRowH + EH_PAD_V + EH_STRAT_GAP;
     }
 
-    // "+ Add Error Strategy" button at the bottom of the error handler section
     const addStratG = svgEl('g', { cursor: 'pointer' }, parent);
     const asBtnX = 10;
     const asBtnY = curY;
@@ -1474,7 +1585,6 @@ function drawErrorSection(parent, flow, flowW, mainH){
     addStratG.addEventListener('mouseleave', () => { addStratG.querySelector('rect').setAttribute('fill', C.errHdr + '18'); });
     addStratG.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Show a small menu to pick between on-error-propagate and on-error-continue
       showErrorStrategyMenu(e.clientX, e.clientY, flow);
     });
   }
@@ -1525,11 +1635,240 @@ function showErrorStrategyMenu(clientX, clientY, flow) {
   setTimeout(function() { menuSearch.style.display = ''; }, 0);
 }
 
+// ── Node Position Tracker for Cross-Flow Arrows ──────────────────────────────
+const nodePosMap = new Map();
+
+// ── Draw a sequence of FlowNodes horizontally ────────────────────────────────
+function drawSequence(parent, nodes, startX, startY, flow, maxH, flowLineNumber, parentAbsX, parentAbsY) {
+  let curX = startX;
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const size = measureNode(node);
+    const nodeY = startY + (maxH - size.h) / 2;
+    const absX = parentAbsX + curX;
+    const absY = parentAbsY + nodeY;
+
+    drawFlowNode(parent, node, curX, nodeY, flow, flowLineNumber, absX, absY);
+
+    if (i < nodes.length - 1) {
+      const ay = startY + maxH / 2;
+      const nextX = curX + size.w + NODE_GAP;
+      svgEl('line', {
+        x1: curX + size.w,
+        y1: ay,
+        x2: nextX - 2,
+        y2: ay,
+        stroke: C.arrow,
+        'stroke-width': 1.5,
+        'marker-end': 'url(#arr)'
+      }, parent);
+
+      const cx = curX + size.w + NODE_GAP / 2;
+      drawPlusButton(parent, cx, ay, flow, node);
+    }
+    curX += size.w + NODE_GAP;
+  }
+}
+
+// ── Draw a single FlowNode (Leaf, Scope, Router, Parallel) ───────────────────
+function drawFlowNode(parent, node, x, y, flow, flowLineNumber, absX, absY) {
+  const size = measureNode(node);
+  nodePosMap.set(node.nodeId, { absX, absY, w: size.w, h: size.h, node, flow });
+
+  if (!node.layoutHint || node.layoutHint === 'leaf') {
+    return drawNode(parent, node, x, y, flowLineNumber);
+  }
+
+  if (node.layoutHint === 'scope') {
+    const g = svgEl('g', { transform: "translate(" + x + "," + y + ")", 'data-nodeid': node.nodeId }, parent);
+    const ac = C[node.shape] || C.rect || '#58a6ff';
+
+    const scopeBg = svgEl('rect', {
+      x: 0, y: 0, width: size.w, height: size.h, rx: 4,
+      fill: C.flowBg, stroke: ac + '77', 'stroke-width': 1.2, 'stroke-dasharray': '5,3'
+    }, g);
+
+    const hdrG = svgEl('g', { cursor: 'pointer' }, g);
+    svgEl('rect', { x: 0, y: 0, width: size.w, height: CONTAINER_HDR_H, rx: 4, fill: ac + '25' }, hdrG);
+    svgEl('rect', { x: 0, y: CONTAINER_HDR_H - 2, width: size.w, height: 2, fill: ac + '55' }, hdrG);
+
+    const tagShort = node.tagName.includes(':') ? node.tagName.split(':')[1] : node.tagName;
+    const scopeTitle = node.rawAttrs['doc:name'] || node.label || tagShort;
+    const ico = svgEl('text', { x: 8, y: CONTAINER_HDR_H / 2 + 3, 'font-size': 11, fill: ac, style: 'pointer-events:none' }, hdrG);
+    ico.textContent = '📦';
+    const txt = svgEl('text', { x: 24, y: CONTAINER_HDR_H / 2 + 2, 'font-size': 9, 'font-weight': 600, fill: C.nodeText, style: 'pointer-events:none' }, hdrG);
+    txt.textContent = trunc(scopeTitle, size.w - 32);
+
+    hdrG.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const line = node.lineNumber || flowLineNumber;
+      highlightSidebar(null, line);
+      selectNode(g, node, line);
+    });
+    hdrG.addEventListener('mouseenter', (e) => {
+      scopeBg.setAttribute('fill', C.nodeHover);
+      showTip(e, node.tagName + (node.rawAttrs['doc:name'] ? ' — ' + node.rawAttrs['doc:name'] : ''));
+    });
+    hdrG.addEventListener('mouseleave', () => {
+      scopeBg.setAttribute('fill', C.flowBg);
+      hideTip();
+    });
+
+    const children = node.children || [];
+    const childrenSeqSize = measureSequence(children);
+    const seqX = CONTAINER_PAD_H;
+    const seqY = CONTAINER_HDR_H + CONTAINER_PAD_V;
+
+    if (!children.length) {
+      const ep = svgEl('text', { x: size.w / 2, y: seqY + NODE_H / 2 + 3, 'text-anchor': 'middle', fill: '#555', 'font-size': 10, style: 'pointer-events:none' }, g);
+      ep.textContent = 'Empty Scope';
+      drawPlusButton(g, size.w / 2, seqY + NODE_H / 2, flow, node);
+    } else {
+      drawSequence(g, children, seqX, seqY, flow, childrenSeqSize.h, flowLineNumber, absX + seqX, absY + seqY);
+    }
+    return g;
+  }
+
+  if (node.layoutHint === 'router' || node.layoutHint === 'parallel') {
+    const g = svgEl('g', { transform: "translate(" + x + "," + y + ")", 'data-nodeid': node.nodeId }, parent);
+    const isParallel = node.layoutHint === 'parallel';
+    const ac = isParallel ? (C.cylinder || '#3fb950') : (C.diamond || '#d29922');
+
+    const routerBg = svgEl('rect', {
+      x: 0, y: 0, width: size.w, height: size.h, rx: 4,
+      fill: C.flowBg, stroke: ac + '88', 'stroke-width': 1.5
+    }, g);
+
+    const hdrG = svgEl('g', { cursor: 'pointer' }, g);
+    svgEl('rect', { x: 0, y: 0, width: size.w, height: CONTAINER_HDR_H, rx: 4, fill: ac + '25' }, hdrG);
+    svgEl('rect', { x: 0, y: CONTAINER_HDR_H - 2, width: size.w, height: 2, fill: ac + '55' }, hdrG);
+
+    const tagShort = node.tagName.includes(':') ? node.tagName.split(':')[1] : node.tagName;
+    const routerTitle = node.rawAttrs['doc:name'] || (isParallel ? 'Scatter-Gather' : 'Choice Router');
+    const ico = svgEl('text', { x: 8, y: CONTAINER_HDR_H / 2 + 3, 'font-size': 11, fill: ac, style: 'pointer-events:none' }, hdrG);
+    ico.textContent = isParallel ? '⑂' : '🔀';
+    const txt = svgEl('text', { x: 24, y: CONTAINER_HDR_H / 2 + 2, 'font-size': 9, 'font-weight': 700, fill: C.nodeText, style: 'pointer-events:none' }, hdrG);
+    txt.textContent = trunc(routerTitle, size.w - 32);
+
+    hdrG.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const line = node.lineNumber || flowLineNumber;
+      highlightSidebar(null, line);
+      selectNode(g, node, line);
+    });
+    hdrG.addEventListener('mouseenter', (e) => {
+      routerBg.setAttribute('fill', C.nodeHover);
+      showTip(e, node.tagName + (node.rawAttrs['doc:name'] ? ' — ' + node.rawAttrs['doc:name'] : ''));
+    });
+    hdrG.addEventListener('mouseleave', () => {
+      routerBg.setAttribute('fill', C.flowBg);
+      hideTip();
+    });
+
+    const branches = node.branches || [];
+    if (!branches.length) {
+      const ep = svgEl('text', { x: size.w / 2, y: CONTAINER_HDR_H + CONTAINER_PAD_V + NODE_H / 2 + 3, 'text-anchor': 'middle', fill: '#555', 'font-size': 10, style: 'pointer-events:none' }, g);
+      ep.textContent = 'Empty Router';
+      drawPlusButton(g, size.w / 2, CONTAINER_HDR_H + CONTAINER_PAD_V + NODE_H / 2, flow, node);
+      return g;
+    }
+
+    const spineX = CONTAINER_PAD_H + 8;
+    const badgeX = spineX + 8;
+    const routesStartX = badgeX + BRANCH_LABEL_W + NODE_GAP;
+    let curBranchY = CONTAINER_HDR_H + CONTAINER_PAD_V;
+    let firstCenterY = 0, lastCenterY = 0;
+    const branchEndPoints = [];
+
+    for (let bi = 0; bi < branches.length; bi++) {
+      const b = branches[bi];
+      const bChildren = b.children || [];
+      const bSeqSize = bChildren.length ? measureSequence(bChildren) : { w: 60, h: NODE_H };
+      const bH = Math.max(bSeqSize.h, BRANCH_LABEL_H + 12);
+      const bCenterY = curBranchY + bH / 2;
+
+      if (bi === 0) firstCenterY = bCenterY;
+      lastCenterY = bCenterY;
+
+      svgEl('rect', {
+        x: spineX + 4, y: curBranchY + 2,
+        width: size.w - (spineX + 4) - CONTAINER_PAD_H, height: bH - 4,
+        rx: 3, fill: ac + '0a'
+      }, g);
+
+      svgEl('line', { x1: spineX, y1: bCenterY, x2: badgeX, y2: bCenterY, stroke: ac, 'stroke-width': 1.2 }, g);
+
+      const badgeG = svgEl('g', { cursor: 'pointer' }, g);
+      svgEl('rect', { x: badgeX, y: bCenterY - BRANCH_LABEL_H / 2, width: BRANCH_LABEL_W, height: BRANCH_LABEL_H, rx: 3, fill: ac + '1e', stroke: ac + '88', 'stroke-width': 1 }, badgeG);
+      const bLabelText = b.label || (b.condition ? 'when: ' + b.condition : 'Route ' + (bi + 1));
+      const bTextEl = svgEl('text', { x: badgeX + 6, y: bCenterY + 3, 'font-size': 9, 'font-weight': 600, fill: C.nodeText, style: 'pointer-events:none' }, badgeG);
+      bTextEl.textContent = trunc(bLabelText, BRANCH_LABEL_W - 10);
+
+      badgeG.addEventListener('mouseenter', (e) => {
+        showTip(e, (b.condition ? 'Condition: ' + b.condition : b.label));
+      });
+      badgeG.addEventListener('mouseleave', hideTip);
+
+      svgEl('line', {
+        x1: badgeX + BRANCH_LABEL_W, y1: bCenterY,
+        x2: routesStartX - 2, y2: bCenterY,
+        stroke: C.arrow, 'stroke-width': 1.2, 'marker-end': 'url(#arr)'
+      }, g);
+
+      if (!bChildren.length) {
+        const ep = svgEl('text', { x: routesStartX + 20, y: bCenterY + 3, fill: '#555', 'font-size': 10, style: 'pointer-events:none' }, g);
+        ep.textContent = 'Empty Route';
+        drawPlusButton(g, routesStartX + 75, bCenterY, flow, node);
+        branchEndPoints.push({ x: routesStartX + 95, y: bCenterY });
+      } else {
+        drawSequence(g, bChildren, routesStartX, curBranchY, flow, bH, flowLineNumber, absX + routesStartX, absY + curBranchY);
+        const lastBNode = bChildren[bChildren.length - 1];
+        const bLastX = routesStartX + bSeqSize.w;
+        svgEl('line', {
+          x1: bLastX, y1: bCenterY,
+          x2: bLastX + 12, y2: bCenterY,
+          stroke: C.arrow, 'stroke-width': 1.2, 'marker-end': 'url(#arr)'
+        }, g);
+        drawPlusButton(g, bLastX + 20, bCenterY, flow, lastBNode);
+        branchEndPoints.push({ x: bLastX + 30, y: bCenterY });
+      }
+
+      curBranchY += bH + BRANCH_GAP;
+    }
+
+    // Input distribution spine
+    if (branches.length > 1) {
+      svgEl('line', { x1: spineX, y1: firstCenterY, x2: spineX, y2: lastCenterY, stroke: ac, 'stroke-width': 1.5 }, g);
+      const midY = (firstCenterY + lastCenterY) / 2;
+      svgEl('line', { x1: 0, y1: midY, x2: spineX, y2: midY, stroke: C.arrow, 'stroke-width': 1.2 }, g);
+    } else {
+      svgEl('line', { x1: 0, y1: firstCenterY, x2: badgeX, y2: firstCenterY, stroke: C.arrow, 'stroke-width': 1.2 }, g);
+    }
+
+    // Output convergence spine
+    const rightSpineX = size.w - CONTAINER_PAD_H;
+    const midOutY = (firstCenterY + lastCenterY) / 2;
+    for (const pt of branchEndPoints) {
+      svgEl('line', { x1: pt.x, y1: pt.y, x2: rightSpineX, y2: pt.y, stroke: ac + '66', 'stroke-width': 1, 'stroke-dasharray': '3,2' }, g);
+    }
+    if (branches.length > 1) {
+      svgEl('line', { x1: rightSpineX, y1: firstCenterY, x2: rightSpineX, y2: lastCenterY, stroke: ac, 'stroke-width': 1.5 }, g);
+    }
+    svgEl('line', { x1: rightSpineX, y1: midOutY, x2: size.w, y2: midOutY, stroke: C.arrow, 'stroke-width': 1.2 }, g);
+
+    return g;
+  }
+
+  return drawNode(parent, node, x, y, flowLineNumber);
+}
+
 // ── Draw one flow ─────────────────────────────────────────────────────────────
 function drawFlow(parent, flow, x, y){
   const {w,h} = flowSize(flow);
   const hc = flow.kind==='flow'?C.flowHdr:flow.kind==='sub-flow'?C.subFlowHdr:C.errHdr;
-  const mainH = FLOW_HDR+FLOW_PAD_V+NODE_H+FLOW_PAD_V;
+  const nodes = flow.rootNodes || flow.steps || [];
+  const seqSize = measureSequence(nodes);
+  const mainH = FLOW_HDR+FLOW_PAD_V+seqSize.h+FLOW_PAD_V;
 
   const g = svgEl('g',{transform:"translate(" + x + "," + y + ")",'data-subgraph':flow.subgraphId,'data-line':flow.lineNumber},parent);
   svgEl('rect',{x:0,y:0,width:w,height:h,rx:4,fill:C.flowBg,stroke:C.flowBorder,'stroke-width':1},g);
@@ -1537,7 +1876,6 @@ function drawFlow(parent, flow, x, y){
   svgEl('rect',{x:0,y:FLOW_HDR-4,width:w,height:4,fill:hc},g);
 
   const kindPfx = flow.kind==='flow'?'Flow':flow.kind==='sub-flow'?'Sub-Flow':'Error Handler';
-  
   const isCollapsed = collapsedFlows.has(flow.subgraphId);
 
   const hit = svgEl('rect',{x:22,y:0,width:Math.max(10, w-22),height:FLOW_HDR,fill:'transparent',cursor:'pointer'},g);
@@ -1568,11 +1906,10 @@ function drawFlow(parent, flow, x, y){
   hl.textContent = trunc(kindPfx + ": " + flow.name, w - 35);
 
   if(!isCollapsed){
-    if(!flow.steps.length){
+    if(!nodes.length){
       const ep = svgEl('text',{x:w/2 - 30,y:FLOW_HDR+FLOW_PAD_V+NODE_H/2,
         'text-anchor':'middle','dominant-baseline':'middle',fill:'#555','font-size':11,style:'pointer-events:none'},g);
       ep.textContent='Empty Flow';
-      // Plus button to add first component in empty flow
       const emptyPlusG = svgEl('g', { cursor: 'pointer' }, g);
       const epx = w/2 + 30;
       const epy = FLOW_HDR+FLOW_PAD_V+NODE_H/2;
@@ -1583,39 +1920,42 @@ function drawFlow(parent, flow, x, y){
       emptyPlusG.addEventListener('mouseleave', () => { epc.setAttribute('fill', C.nodeBg); epc.setAttribute('stroke', C.arrow); ept.setAttribute('fill', C.arrow); });
       emptyPlusG.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Use a virtual step with the flow's opening tag as anchor
         const virtualStep = { tagName: flow.kind, lineNumber: flow.lineNumber, rawAttrs: {} };
         showAddMenu(e.clientX, e.clientY, flow, virtualStep);
       });
     } else {
-      flow.steps.forEach((step,i)=>{
-        const nx = FLOW_PAD_H + i*(NODE_W+NODE_GAP);
-        const ny = FLOW_HDR + FLOW_PAD_V;
-        drawNode(g, step, nx, ny, flow.lineNumber);
-        if(i<flow.steps.length-1){
-          const ay = FLOW_HDR+FLOW_PAD_V+NODE_H/2;
-          svgEl('line',{x1:nx+NODE_W,y1:ay,x2:FLOW_PAD_H+(i+1)*(NODE_W+NODE_GAP)-2,y2:ay,
-            stroke:C.arrow,'stroke-width':1.5,'marker-end':'url(#arr)'},g);
-          
-          const cx = nx + NODE_W + NODE_GAP / 2;
-          drawPlusButton(g, cx, ay, flow, step);
-        }
-        
-        if (i === flow.steps.length - 1) {
-          const ay = FLOW_HDR + FLOW_PAD_V + NODE_H / 2;
-          const lx1 = nx + NODE_W;
-          const lx2 = lx1 + NODE_GAP / 2;
-          svgEl('line', { x1: lx1, y1: ay, x2: lx2 - 2, y2: ay, stroke: C.arrow, 'stroke-width': 1.5, 'marker-end': 'url(#arr)' }, g);
-          
-          const cx = lx2 + 8;
-          drawPlusButton(g, cx, ay, flow, step);
-        }
-      });
+      const startX = FLOW_PAD_H;
+      const startY = FLOW_HDR + FLOW_PAD_V;
+      drawSequence(g, nodes, startX, startY, flow, seqSize.h, flow.lineNumber, x, y);
+
+      const lastNode = nodes[nodes.length - 1];
+      const ay = startY + seqSize.h / 2;
+      const lx1 = startX + seqSize.w;
+      const lx2 = lx1 + NODE_GAP / 2;
+      svgEl('line', { x1: lx1, y1: ay, x2: lx2 - 2, y2: ay, stroke: C.arrow, 'stroke-width': 1.5, 'marker-end': 'url(#arr)' }, g);
+
+      const cx = lx2 + 8;
+      drawPlusButton(g, cx, ay, flow, lastNode);
     }
-    drawErrorSection(g, flow, w, mainH);
+    drawErrorSection(g, flow, w, mainH, x, y);
   }
 
   return {w,h};
+}
+
+// ── Recursive helper to collect flow references ──────────────────────────────
+function collectFlowRefs(nodes, out) {
+  if (!out) out = [];
+  for (const n of nodes) {
+    if (n.flowRefTarget) out.push(n);
+    if (n.children && n.children.length) collectFlowRefs(n.children, out);
+    if (n.branches && n.branches.length) {
+      for (const b of n.branches) {
+        if (b.children && b.children.length) collectFlowRefs(b.children, out);
+      }
+    }
+  }
+  return out;
 }
 
 // ── Full render ───────────────────────────────────────────────────────────────
@@ -1624,6 +1964,7 @@ function render(){
   const vp = document.getElementById('viewport');
   vp.innerHTML='';
   selectedNodeEl=null;
+  nodePosMap.clear();
   canvasW=0; canvasH=0;
   if(!FLOWS.length){
     svgEl('text',{x:200,y:200,'text-anchor':'middle',fill:'#555','font-size':14},vp).textContent='No flows found';
@@ -1645,14 +1986,21 @@ function render(){
   const rectBySg=new Map(rects.map(r=>[r.flow.subgraphId,r]));
   rects.forEach(src=>{
     if (collapsedFlows.has(src.flow.subgraphId)) return;
-    src.flow.steps.forEach((step,si)=>{
-      if(!step.flowRefTarget) return;
+    const flowRefs = collectFlowRefs(src.flow.rootNodes || src.flow.steps || []);
+    flowRefs.forEach(step=>{
       const tgt=flowByName.get(step.flowRefTarget);
       if(!tgt) return;
       const dst=rectBySg.get(tgt.subgraphId);
       if(!dst) return;
-      const sx=src.x+FLOW_PAD_H+si*(NODE_W+NODE_GAP)+NODE_W/2;
-      const sy=src.y+src.h;
+      const pos = nodePosMap.get(step.nodeId);
+      let sx, sy;
+      if (pos) {
+        sx = pos.absX + pos.w / 2;
+        sy = pos.absY + pos.h;
+      } else {
+        sx = src.x + src.w / 2;
+        sy = src.y + src.h;
+      }
       const dstCollapsed = collapsedFlows.has(tgt.subgraphId);
       const dx = dstCollapsed ? dst.x + 100 : dst.x+FLOW_PAD_H+NODE_W/2;
       const dy = dstCollapsed ? dst.y+FLOW_HDR/2 : dst.y;

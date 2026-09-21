@@ -18,7 +18,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { parseMuleXml, ParsedFlow, TAG_META, ChildFieldDef, CHILD_SCHEMA } from "./muleParser";
+import { parseMuleXml, ParsedFlow, FlowNode, TAG_META, ChildFieldDef, CHILD_SCHEMA } from "./muleParser";
 import { getWebviewContent, getNonce } from "./webviewContent";
 import {
   extractNamespaces,
@@ -486,14 +486,23 @@ function updatePanel(doc: vscode.TextDocument, _force = false): void {
 
     currentFlows = flows;
 
-    const serializeStep = (s: typeof flows[0]["steps"][0]) => ({
-      label: s.label,
-      nodeId: s.nodeId,
-      tagName: s.tagName,
-      shape: s.shape,
-      flowRefTarget: s.flowRefTarget || null,
-      rawAttrs: (s as any).rawAttrs || {},
-      lineNumber: s.lineNumber,
+    const serializeNode = (n: FlowNode): any => ({
+      label: n.label,
+      nodeId: n.nodeId,
+      tagName: n.tagName,
+      shape: n.shape,
+      layoutHint: n.layoutHint,
+      flowRefTarget: n.flowRefTarget || null,
+      rawAttrs: n.rawAttrs || {},
+      lineNumber: n.lineNumber,
+      children: (n.children || []).map(serializeNode),
+      branches: n.branches
+        ? n.branches.map((b) => ({
+            label: b.label,
+            condition: b.condition,
+            children: (b.children || []).map(serializeNode),
+          }))
+        : undefined,
     });
 
     const serializedFlows = flows.map((f) => ({
@@ -501,12 +510,13 @@ function updatePanel(doc: vscode.TextDocument, _force = false): void {
       name: f.name,
       lineNumber: f.lineNumber,
       subgraphId: f.subgraphId,
-      steps: f.steps.map(serializeStep),
+      rootNodes: (f.rootNodes || f.steps || []).map(serializeNode),
+      steps: (f.rootNodes || f.steps || []).map(serializeNode),
       errorHandler: f.errorHandler
         ? f.errorHandler.map((eh) => ({
           type: eh.type,
           label: eh.label,
-          steps: eh.steps.map(serializeStep),
+          steps: (eh.steps || []).map(serializeNode),
         }))
         : null,
     }));
