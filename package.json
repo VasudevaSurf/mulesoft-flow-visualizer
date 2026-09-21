@@ -34,17 +34,22 @@
     "commands": [
       {
         "command": "mulesoft-flow-visualizer.openVisualizer",
-        "title": "Open MuleSoft Multi-Flow Visualizer",
-        "category": "MuleSoft",
+        "title": "Open Mule Flow Diagram",
+        "category": "Mule",
         "icon": {
           "light": "images/icon-light.svg",
           "dark": "images/icon-dark.svg"
         }
       },
       {
+        "command": "muleFlow.openDiagram",
+        "title": "Open Flow Diagram",
+        "category": "Mule"
+      },
+      {
         "command": "mulesoft-flow-visualizer.refreshVisualizer",
-        "title": "Refresh MuleSoft Visualizer",
-        "category": "MuleSoft",
+        "title": "Refresh Mule Flow Diagram",
+        "category": "Mule",
         "icon": "$(refresh)"
       }
     ],
@@ -57,7 +62,7 @@
         },
         {
           "command": "mulesoft-flow-visualizer.refreshVisualizer",
-          "when": "resourceExtname == .xml && mulesoft-flow-visualizer.panelOpen",
+          "when": "resourceExtname == .xml",
           "group": "navigation@2"
         }
       ],
@@ -67,8 +72,11 @@
           "when": "resourceExtname == .xml"
         },
         {
-          "command": "mulesoft-flow-visualizer.refreshVisualizer",
-          "when": "mulesoft-flow-visualizer.panelOpen"
+          "command": "muleFlow.openDiagram",
+          "when": "resourceExtname == .xml"
+        },
+        {
+          "command": "mulesoft-flow-visualizer.refreshVisualizer"
         }
       ],
       "explorer/context": [
@@ -80,33 +88,59 @@
       ]
     },
     "configuration": {
-      "title": "MuleSoft Flow Visualizer",
+      "title": "Mule Flow Visualizer",
       "properties": {
-        "mulesoftFlowVisualizer.autoRefresh": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically refresh the visualizer when the Mule XML file changes."
-        },
-        "mulesoftFlowVisualizer.refreshDebounceMs": {
-          "type": "number",
-          "default": 800,
-          "description": "Debounce delay in milliseconds before auto-refreshing after an edit."
-        },
-        "mulesoftFlowVisualizer.theme": {
+        "muleFlow.theme": {
           "type": "string",
           "enum": [
-            "default",
-            "dark",
-            "forest",
-            "neutral"
+            "vscode",
+            "studio"
           ],
-          "default": "default",
-          "description": "Mermaid diagram theme to use."
+          "default": "vscode",
+          "description": "Canvas theme: match VS Code editor theme or use Anypoint Studio palette."
         },
-        "mulesoftFlowVisualizer.showErrorHandlers": {
+        "muleFlow.autoOpenOnMuleXml": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open the visualizer when a Mule XML file is opened."
+        },
+        "muleFlow.collapseErrorHandlers": {
+          "type": "string",
+          "enum": [
+            "never",
+            "always",
+            "auto"
+          ],
+          "default": "auto",
+          "description": "Error handler band collapse behavior. 'auto' collapses in files with >8 flows."
+        },
+        "muleFlow.showSubtitles": {
           "type": "boolean",
           "default": true,
-          "description": "Include error handlers in the visualization."
+          "description": "Show secondary attribute labels (config-ref, path, expression) under component names."
+        },
+        "muleFlow.mavenLocalRepository": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Custom path to local Maven repository (~/.m2/repository). Auto-detected if null."
+        },
+        "muleFlow.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Debounce delay in milliseconds before re-rendering after XML edits."
+        },
+        "muleFlow.maxNodesBeforeCanvas": {
+          "type": "number",
+          "default": 2000,
+          "description": "Node count threshold above which canvas rendering mode is used."
+        },
+        "muleFlow.showGlobalConfigs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show global configurations list in side panel."
         }
       }
     }
@@ -133,6 +167,7 @@
   "dependencies": {
     "@types/jszip": "^3.4.0",
     "fast-xml-parser": "^4.3.4",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "saxes": "^6.0.0"
   }
 }
