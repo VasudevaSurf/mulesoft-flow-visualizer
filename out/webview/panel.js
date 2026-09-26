@@ -340,7 +340,8 @@ class FlowVisualizerPanel {
         // We can export SVG directly
         const svgHeader = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${this.lastScene.totalWidth}" height="${this.lastScene.totalHeight}" viewBox="0 0 ${this.lastScene.totalWidth} ${this.lastScene.totalHeight}">`;
         const symbols = iconStore_1.IconStore.getAllSymbols();
-        const defs = `<defs>${symbols}</defs>`;
+        const arrowMarker = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#90a4ae"/></marker>`;
+        const defs = `<defs>${arrowMarker}\n${symbols}</defs>`;
         const fullSvg = `${svgHeader}\n${defs}\n<rect width="100%" height="100%" fill="#1e1e1e"/>\n<!-- Scene -->\n</svg>`;
         fs.writeFileSync(saveUri.fsPath, fullSvg, 'utf-8');
         vscode.window.showInformationMessage(`Exported flow diagram to ${path.basename(saveUri.fsPath)}`);

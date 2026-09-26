@@ -361,6 +361,9 @@ class WebviewHtmlBuilder {
       fill: none;
       stroke-linejoin: round;
     }
+    #arrow path {
+      fill: var(--lane-line);
+    }
 
     /* ── Processor Tile ─────────────────────────────── */
     .tile-group {
@@ -385,7 +388,8 @@ class WebviewHtmlBuilder {
     }
     .tile-icon-chip {
       fill: var(--chip-bg);
-      rx: 6;
+      rx: 22;
+      border-radius: 50%;
     }
     .tile-title {
       font-size: 10.5px;
@@ -469,7 +473,11 @@ class WebviewHtmlBuilder {
 
       <!-- SVG Rendering Canvas -->
       <svg id="canvas-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-        <defs id="svg-defs"></defs>
+        <defs id="svg-defs">
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--lane-line)"/>
+          </marker>
+        </defs>
         <g id="scene-root"></g>
       </svg>
     </div>
@@ -620,8 +628,11 @@ class WebviewHtmlBuilder {
           } else {
             document.body.classList.remove('theme-studio');
           }
+          const arrowMarker = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--lane-line)"/></marker>';
           if (msg.symbolsSvg) {
-            svgDefs.innerHTML = msg.symbolsSvg;
+            svgDefs.innerHTML = arrowMarker + msg.symbolsSvg;
+          } else {
+            svgDefs.innerHTML = arrowMarker;
           }
           renderScene(msg.scene, msg.model);
           break;
@@ -815,7 +826,15 @@ class WebviewHtmlBuilder {
         const laneY = first.laneY;
         const startX = flow.sourceBox ? (flow.sourceBox.x + flow.sourceBox.width + 12) : flow.processBox.x;
         const endX = last.x + last.width;
-        html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${endX}" y2="\${laneY}" />\`;
+        html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${endX}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+
+        // Inbound and inter-node connectors with arrowheads
+        html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${first.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+        for (let i = 0; i < flow.chain.length - 1; i++) {
+          const fromNode = flow.chain[i];
+          const toNode = flow.chain[i + 1];
+          html += \`<line class="lane-line" x1="\${fromNode.x + fromNode.width}" y1="\${laneY}" x2="\${toNode.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+        }
       }
 
       // Process Chain Nodes
@@ -920,7 +939,13 @@ class WebviewHtmlBuilder {
         if (pNode.children.length > 0) {
           const first = pNode.children[0];
           const last = pNode.children[pNode.children.length - 1];
-          html += \`<line class="lane-line" x1="\${pNode.x + 8}" y1="\${first.laneY}" x2="\${last.x + last.width}" y2="\${first.laneY}" />\`;
+          html += \`<line class="lane-line" x1="\${pNode.x + 8}" y1="\${first.laneY}" x2="\${last.x + last.width}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          html += \`<line class="lane-line" x1="\${pNode.x + 8}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          for (let i = 0; i < pNode.children.length - 1; i++) {
+            const fromChild = pNode.children[i];
+            const toChild = pNode.children[i + 1];
+            html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          }
           for (const child of pNode.children) {
             html += renderNode(child);
           }
@@ -933,7 +958,7 @@ class WebviewHtmlBuilder {
           const lastLaneY = pNode.routes[pNode.routes.length - 1].laneY;
 
           // Incoming lane to spine
-          html += \`<line class="lane-line" x1="\${pNode.x}" y1="\${firstLaneY}" x2="\${spineX}" y2="\${firstLaneY}" />\`;
+          html += \`<line class="lane-line" x1="\${pNode.x}" y1="\${firstLaneY}" x2="\${spineX}" y2="\${firstLaneY}" marker-end="url(#arrow)" />\`;
           // Vertical spine
           html += \`<line class="router-spine" x1="\${spineX}" y1="\${firstLaneY}" x2="\${spineX}" y2="\${lastLaneY}" />\`;
 
@@ -944,11 +969,11 @@ class WebviewHtmlBuilder {
           // Rejoin bracket on the right
           const rejoinX = pNode.x + pNode.width - 20;
           html += \`<line class="router-spine" x1="\${rejoinX}" y1="\${firstLaneY}" x2="\${rejoinX}" y2="\${lastLaneY}" />\`;
-          html += \`<line class="lane-line" x1="\${rejoinX}" y1="\${firstLaneY}" x2="\${pNode.x + pNode.width}" y2="\${firstLaneY}" />\`;
+          html += \`<line class="lane-line" x1="\${rejoinX}" y1="\${firstLaneY}" x2="\${pNode.x + pNode.width}" y2="\${firstLaneY}" marker-end="url(#arrow)" />\`;
           for (const route of pNode.routes) {
             const rLastNode = route.children.length > 0 ? route.children[route.children.length - 1] : null;
             const rEndX = rLastNode ? (rLastNode.x + rLastNode.width) : (route.x + 60);
-            html += \`<line class="lane-line" x1="\${rEndX}" y1="\${route.laneY}" x2="\${rejoinX}" y2="\${route.laneY}" />\`;
+            html += \`<line class="lane-line" x1="\${rEndX}" y1="\${route.laneY}" x2="\${rejoinX}" y2="\${route.laneY}" marker-end="url(#arrow)" />\`;
           }
         }
 
@@ -971,7 +996,7 @@ class WebviewHtmlBuilder {
           <rect class="tile-rect" x="\${pNode.x}" y="\${pNode.y}" width="\${pNode.width}" height="\${pNode.height}" />
 
           <!-- Icon Chip & SVG Icon -->
-          <rect class="tile-icon-chip" x="\${pNode.x + 38}" y="\${pNode.y + 6}" width="44" height="44" />
+          <rect class="tile-icon-chip" x="\${pNode.x + 38}" y="\${pNode.y + 6}" width="44" height="44" rx="22" />
           <use xlink:href="#\${pNode.node.descriptor.iconId}" x="\${pNode.x + 38}" y="\${pNode.y + 6}" width="44" height="44" />
           
           <!-- Labels with safe width fitting -->
@@ -989,7 +1014,7 @@ class WebviewHtmlBuilder {
       let html = '';
       if (isRouterBranch) {
         // Horizontal stub from spine into route
-        html += \`<line class="lane-line" x1="\${spineX}" y1="\${route.laneY}" x2="\${route.x}" y2="\${route.laneY}" />\`;
+        html += \`<line class="lane-line" x1="\${spineX}" y1="\${route.laneY}" x2="\${route.x}" y2="\${route.laneY}" marker-end="url(#arrow)" />\`;
       }
 
       // Route Label with max-width protection so it NEVER extends past route.width
@@ -1006,7 +1031,13 @@ class WebviewHtmlBuilder {
       if (route.children.length > 0) {
         const first = route.children[0];
         const last = route.children[route.children.length - 1];
-        html += \`<line class="lane-line" x1="\${route.x + 4}" y1="\${route.laneY}" x2="\${last.x + last.width}" y2="\${route.laneY}" />\`;
+        html += \`<line class="lane-line" x1="\${route.x + 4}" y1="\${route.laneY}" x2="\${last.x + last.width}" y2="\${route.laneY}" marker-end="url(#arrow)" />\`;
+        html += \`<line class="lane-line" x1="\${route.x + 4}" y1="\${route.laneY}" x2="\${first.x}" y2="\${route.laneY}" marker-end="url(#arrow)" />\`;
+        for (let i = 0; i < route.children.length - 1; i++) {
+          const fromChild = route.children[i];
+          const toChild = route.children[i + 1];
+          html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${route.laneY}" x2="\${toChild.x}" y2="\${route.laneY}" marker-end="url(#arrow)" />\`;
+        }
         for (const child of route.children) {
           html += renderNode(child);
         }
