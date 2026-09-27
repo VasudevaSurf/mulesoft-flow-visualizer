@@ -232,17 +232,58 @@ function buildParameterModel(raw) {
     // 4. raw.group
     const explicitTab = raw.layoutModel?.tabName || raw.tabName || raw.tab || raw.group;
     const group = inferParameterGroup(name, description, explicitTab);
-    // DataWeave expression support: references do not support expressions, normal parameters do
-    const supportsExpression = !isReference;
+    // DataWeave expression support resolution:
+    // Read authentic expressionSupport field from real extension model
+    // Expected enum values: 'NOT_SUPPORTED', 'SUPPORTED', 'REQUIRED'
+    // When absent (e.g. *-extension-descriptions.xml or XSD format), default to false rather than guessing true.
+    const rawExprSupport = raw.expressionSupport ||
+        raw['expression-support'] ||
+        raw['@_expressionSupport'] ||
+        raw['@_expression-support'];
+    const normalizedExprSupport = typeof rawExprSupport === 'string'
+        ? rawExprSupport.trim().toUpperCase()
+        : undefined;
+    let supportsExpression = false;
+    let isExpressionRequired = false;
+    if (isReference) {
+        // References never support DataWeave expressions
+        supportsExpression = false;
+    }
+    else if (normalizedExprSupport === 'NOT_SUPPORTED') {
+        supportsExpression = false;
+    }
+    else if (normalizedExprSupport === 'SUPPORTED') {
+        supportsExpression = true;
+    }
+    else if (normalizedExprSupport === 'REQUIRED') {
+        supportsExpression = true;
+        isExpressionRequired = true;
+    }
+    else {
+        // Field is entirely absent (e.g. older *-extension-descriptions.xml or XSD format):
+        // Default supportsExpression to false rather than guessing true.
+        supportsExpression = false;
+    }
     // Extract raw type string if type is an object (e.g. { format: 'java', type: 'String' })
     const rawTypeStr = typeof raw.type === 'string'
         ? raw.type
         : (raw.type && typeof raw.type === 'object' ? (raw.type.type || raw.type.format) : undefined);
     // Infer data type and allowed values
     const { dataType, allowedValues, inferredDefault } = inferParameterDetails(name, description, rawTypeStr, raw.allowedValues);
-    const defaultValue = raw.defaultValue !== undefined && raw.defaultValue !== null
+    let defaultValue = raw.defaultValue !== undefined && raw.defaultValue !== null
         ? raw.defaultValue
         : inferredDefault;
+    // REQUIRED specifically means the field should default to expression mode ON.
+    // In the webview, expression mode is initialized ON when the initial value starts with #[
+    if (isExpressionRequired) {
+        if (defaultValue !== undefined && defaultValue !== null && defaultValue !== '') {
+            const defStr = String(defaultValue).trim();
+            defaultValue = defStr.startsWith('#[') ? defaultValue : `#[${defStr}]`;
+        }
+        else {
+            defaultValue = '#[]';
+        }
+    }
     const required = raw.required === true || raw.use?.toLowerCase() === 'required';
     return {
         name,
@@ -257,6 +298,8 @@ function buildParameterModel(raw) {
         referenceType,
         allowedValues: allowedValues && allowedValues.length > 0 ? allowedValues : undefined,
         use: required ? 'required' : 'optional',
+        expressionSupport: normalizedExprSupport,
+        defaultExpressionMode: isExpressionRequired ? true : undefined,
     };
 }
 /**

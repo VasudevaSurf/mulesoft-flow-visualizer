@@ -1981,11 +1981,28 @@ export class WebviewHtmlBuilder {
       let mainEditor = null;
 
       function createMainTransformEditor() {
+        // ── DIAGNOSTIC 1: guard conditions ──
+        console.log('[DW-DIAG] createMainTransformEditor called');
+        console.log('[DW-DIAG]   window.monaco exists:', !!window.monaco);
+        console.log('[DW-DIAG]   monacoLoaded:', monacoLoaded);
         if (!window.monaco || !monacoLoaded) {
+          console.log('[DW-DIAG]   → queued (monaco not ready)');
           monacoReadyQueue.push(createMainTransformEditor);
           return;
         }
-        if (mainEditor || !editorWrapper.isConnected) return;
+        console.log('[DW-DIAG]   mainEditor already set:', !!mainEditor);
+        console.log('[DW-DIAG]   editorWrapper.isConnected:', editorWrapper.isConnected);
+        if (mainEditor || !editorWrapper.isConnected) {
+          console.log('[DW-DIAG]   → short-circuited (mainEditor=' + !!mainEditor + ', isConnected=' + editorWrapper.isConnected + ')');
+          return;
+        }
+
+        // ── DIAGNOSTIC 2: container dimensions before creation ──
+        const hostRect = editorHost.getBoundingClientRect();
+        const wrapRect = editorWrapper.getBoundingClientRect();
+        console.log('[DW-DIAG]   editorHost rect BEFORE create:', JSON.stringify({w: hostRect.width, h: hostRect.height, t: hostRect.top, l: hostRect.left}));
+        console.log('[DW-DIAG]   editorWrapper rect BEFORE create:', JSON.stringify({w: wrapRect.width, h: wrapRect.height, t: wrapRect.top, l: wrapRect.left}));
+        console.log('[DW-DIAG]   editorHost offsetParent:', editorHost.offsetParent ? editorHost.offsetParent.tagName + '#' + editorHost.offsetParent.id : 'null');
 
         mainEditor = monaco.editor.create(editorHost, {
           value: transformData.script || '',
@@ -2005,8 +2022,62 @@ export class WebviewHtmlBuilder {
           fontFamily: 'var(--vscode-editor-font-family, Consolas, "Courier New", monospace)'
         });
 
+        console.log('[DW-DIAG]   mainEditor created successfully:', !!mainEditor);
+
+        // ── DIAGNOSTIC 2b: container dimensions AFTER creation ──
+        const hostRect2 = editorHost.getBoundingClientRect();
+        console.log('[DW-DIAG]   editorHost rect AFTER create:', JSON.stringify({w: hostRect2.width, h: hostRect2.height}));
+
+        // ── DIAGNOSTIC 3: pointer-event / focus / overlay check ──
+        const domNode = mainEditor.getDomNode();
+        console.log('[DW-DIAG]   editor domNode:', domNode ? domNode.tagName + '.' + domNode.className.split(' ').slice(0,2).join('.') : 'null');
+        if (domNode) {
+          const cs = window.getComputedStyle(domNode);
+          console.log('[DW-DIAG]   editor domNode pointer-events:', cs.pointerEvents);
+          console.log('[DW-DIAG]   editor domNode visibility:', cs.visibility);
+          console.log('[DW-DIAG]   editor domNode display:', cs.display);
+          console.log('[DW-DIAG]   editor domNode overflow:', cs.overflow);
+
+          // Check if the textarea that Monaco uses for input exists and is reachable
+          const ta = domNode.querySelector('textarea.inputarea');
+          if (ta) {
+            const taRect = ta.getBoundingClientRect();
+            console.log('[DW-DIAG]   Monaco inputarea textarea found, rect:', JSON.stringify({w: taRect.width, h: taRect.height, t: taRect.top, l: taRect.left}));
+            const taCS = window.getComputedStyle(ta);
+            console.log('[DW-DIAG]   textarea pointer-events:', taCS.pointerEvents, 'opacity:', taCS.opacity, 'position:', taCS.position);
+          } else {
+            console.log('[DW-DIAG]   ⚠ Monaco inputarea textarea NOT FOUND');
+          }
+        }
+
+        // ── DIAGNOSTIC 3b: check what element is at the center of the editor ──
+        setTimeout(function() {
+          const r = editorHost.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const topEl = document.elementFromPoint(cx, cy);
+          console.log('[DW-DIAG]   elementFromPoint at editor center:', topEl ? topEl.tagName + '.' + (topEl.className || '').toString().split(' ').slice(0,3).join('.') : 'null');
+          if (topEl && !editorHost.contains(topEl)) {
+            console.log('[DW-DIAG]   ⚠ TOP ELEMENT IS NOT INSIDE EDITOR HOST — something is overlaying the editor');
+          } else {
+            console.log('[DW-DIAG]   ✓ Top element is inside editor host');
+          }
+        }, 100);
+
+        // ── DIAGNOSTIC 3c: add click/focus listeners for tracing ──
+        editorHost.addEventListener('mousedown', function(ev) {
+          console.log('[DW-DIAG] editorHost mousedown, target:', ev.target.tagName + '.' + (ev.target.className || '').toString().split(' ').slice(0,2).join('.'));
+        }, true);
+        editorHost.addEventListener('focusin', function(ev) {
+          console.log('[DW-DIAG] editorHost focusin, target:', ev.target.tagName + '.' + (ev.target.className || '').toString().split(' ').slice(0,2).join('.'));
+        }, true);
+        editorHost.addEventListener('keydown', function(ev) {
+          console.log('[DW-DIAG] editorHost keydown, key:', ev.key, 'target:', ev.target.tagName);
+        }, true);
+
         let scriptTimer;
         mainEditor.onDidChangeModelContent(function() {
+          console.log('[DW-DIAG] onDidChangeModelContent fired! new length:', mainEditor.getValue().length);
           clearTimeout(scriptTimer);
           scriptTimer = setTimeout(function() {
             const raw = mainEditor.getValue();
@@ -2016,8 +2087,24 @@ export class WebviewHtmlBuilder {
 
         activeMonacoEditors.set(data.nodeId + '::__transform_main__', mainEditor);
         setTimeout(function() {
-          if (mainEditor) mainEditor.layout();
+          if (mainEditor) {
+            mainEditor.layout();
+            // ── DIAGNOSTIC 2c: dimensions after layout() ──
+            const hostRect3 = editorHost.getBoundingClientRect();
+            console.log('[DW-DIAG]   editorHost rect AFTER layout():', JSON.stringify({w: hostRect3.width, h: hostRect3.height}));
+          }
         }, 30);
+
+        // ── DIAGNOSTIC 4: check if MonacoEnvironment worker creation causes errors ──
+        console.log('[DW-DIAG]   MonacoEnvironment:', window.MonacoEnvironment ? 'set' : 'NOT SET');
+        if (window.MonacoEnvironment && window.MonacoEnvironment.getWorkerUrl) {
+          try {
+            const workerUrl = window.MonacoEnvironment.getWorkerUrl('', 'editorWorkerService');
+            console.log('[DW-DIAG]   worker URL starts with:', (workerUrl || '').slice(0, 80));
+          } catch(wErr) {
+            console.log('[DW-DIAG]   ⚠ getWorkerUrl threw:', wErr.message);
+          }
+        }
       }
 
       // Sync output directive with output dropdown

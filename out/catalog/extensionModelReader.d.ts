@@ -22,6 +22,8 @@ export interface ParameterModel {
     configOptions?: string[];
     configModel?: ConfigurationModel;
     configXmlTag?: string;
+    expressionSupport?: 'NOT_SUPPORTED' | 'SUPPORTED' | 'REQUIRED' | string;
+    defaultExpressionMode?: boolean;
 }
 /**
  * A named tab + its parameter list.
@@ -137,6 +139,10 @@ export declare function buildParameterModel(raw: {
     };
     use?: string;
     allowedValues?: string[];
+    expressionSupport?: string;
+    'expression-support'?: string;
+    '@_expressionSupport'?: string;
+    '@_expression-support'?: string;
 }): ParameterModel;
 /**
  * Extracts nested parameter forms for structural complex objects (TLS, Reconnection, Pooling, Streaming)
