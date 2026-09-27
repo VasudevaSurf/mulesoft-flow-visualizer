@@ -1979,6 +1979,7 @@ export class WebviewHtmlBuilder {
       container.appendChild(editorWrapper);
 
       let mainEditor = null;
+      let isProgrammaticChange = false;
 
       function createMainTransformEditor() {
         // ── DIAGNOSTIC 1: guard conditions ──
@@ -2076,8 +2077,14 @@ export class WebviewHtmlBuilder {
         }, true);
 
         let scriptTimer;
-        mainEditor.onDidChangeModelContent(function() {
-          console.log('[DW-DIAG] onDidChangeModelContent fired! new length:', mainEditor.getValue().length);
+        mainEditor.onDidChangeModelContent(function(e) {
+          const isFlush = !!(e && e.isFlush);
+          if (isProgrammaticChange || isFlush) {
+            console.log('[DW-OUTPUT-DIAG] onDidChangeModelContent skipped (programmatic update, isFlush=' + isFlush + ')');
+            return;
+          }
+          const ro = mainEditor ? mainEditor.getOption(monaco.editor.EditorOption.readOnly) : null;
+          console.log('[DW-OUTPUT-DIAG] onDidChangeModelContent fired! isFlush=' + isFlush + ', readOnly=' + ro + ', new length=' + mainEditor.getValue().length);
           clearTimeout(scriptTimer);
           scriptTimer = setTimeout(function() {
             const raw = mainEditor.getValue();
@@ -2112,17 +2119,42 @@ export class WebviewHtmlBuilder {
         outputSelect.onchange = function() {
           const newType = outputSelect.value;
           if (mainEditor) {
+            const modelBefore = mainEditor.getModel();
+            const roBefore = mainEditor.getOption(monaco.editor.EditorOption.readOnly);
             let cur = mainEditor.getValue();
+            const curBefore = cur;
+            let matchedBranch = 'none';
+
             if (/output\\s+[a-zA-Z0-9_\\-\\/]+/.test(cur)) {
+              matchedBranch = 'branch1_regex_match';
               cur = cur.replace(/output\\s+[a-zA-Z0-9_\\-\\/]+/, 'output ' + newType);
             } else if (cur.startsWith('%dw')) {
+              matchedBranch = 'branch2_dw_header';
               const lines = cur.split('\\n');
               lines.splice(1, 0, 'output ' + newType);
               cur = lines.join('\\n');
             } else {
+              matchedBranch = 'branch3_fallback';
               cur = '%dw 2.0\\noutput ' + newType + '\\n---\\n' + cur;
             }
-            mainEditor.setValue(cur);
+
+            isProgrammaticChange = true;
+            try {
+              mainEditor.setValue(cur);
+            } finally {
+              isProgrammaticChange = false;
+            }
+
+            // ── TEMPORARY DIAGNOSTIC LOGGING ──
+            const modelAfter = mainEditor.getModel();
+            const roAfter = mainEditor.getOption(monaco.editor.EditorOption.readOnly);
+            console.log('[DW-OUTPUT-DIAG] CHECK 1 (readOnly): before=' + roBefore + ', after=' + roAfter);
+            console.log('[DW-OUTPUT-DIAG] CHECK 2 (model/undo): sameModelInstance=' + (modelBefore === modelAfter) + ', isDisposed=' + (modelAfter ? modelAfter.isDisposed() : 'null') + ', readOnlyOption=' + roAfter);
+            console.log('[DW-OUTPUT-DIAG] CHECK 3 (regex/string): branch=' + matchedBranch + ', curBefore=' + JSON.stringify(curBefore) + ', curAfter=' + JSON.stringify(cur));
+
+            // Return focus to Monaco editor so typing works immediately after dropdown selection
+            mainEditor.focus();
+
             sendParamUpdate(data.nodeId, '__transform_payload__', cur, 'dataweave');
           }
         };

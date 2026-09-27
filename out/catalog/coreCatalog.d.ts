@@ -1,8 +1,11 @@
 /**
  * src/catalog/coreCatalog.ts
  *
- * Hardcoded catalog for Mule runtime core components per Section 4.1 of the specification.
- * Core components are built into the Mule runtime, not in Maven plugin jars.
+ * Catalog for Mule runtime core components with real parameter definitions
+ * extracted from official Mule runtime schemas:
+ * - mule-core-common.xsd (Core runtime schemas)
+ * - mule-ee.xsd (Enterprise Edition schemas: transform, cache)
+ * - mule-batch.xsd (Batch processing schemas)
  */
 import { ComponentDescriptor } from "../parser/types";
 export declare const MULE_CORE_NAMESPACE = "http://www.mulesoft.org/schema/mule/core";

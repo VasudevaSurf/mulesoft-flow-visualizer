@@ -20,6 +20,7 @@ export interface RawElement {
     text: string | null;
 }
 export type ComponentKind = 'source' | 'operation' | 'scope' | 'router' | 'error-handler' | 'error-handler-case' | 'route' | 'flow' | 'sub-flow' | 'global-config' | 'unknown';
+import { ParameterGroupModel } from '../catalog/extensionModelReader';
 export interface ComponentDescriptor {
     namespaceUri: string;
     localName: string;
@@ -32,6 +33,8 @@ export interface ComponentDescriptor {
     chainWrapperName?: string;
     /** Attribute to prefer for the secondary label under the name. */
     subtitleAttribute?: string;
+    /** Parameter groups for properties panel */
+    groups?: ParameterGroupModel[];
 }
 export interface ModelDiagnostic {
     message: string;

@@ -6,6 +6,7 @@ import { SemanticModelBuilder } from '../parser/semanticModel';
 import { layout } from '../layout';
 import { IconStore } from '../catalog/iconStore';
 import { ExtensionCatalog } from '../catalog';
+import { CORE_CATALOG } from '../catalog/coreCatalog';
 import { WorkspaceScanner } from '../workspace/scanner';
 import { MavenRepo } from '../workspace/mavenRepo';
 import { ConnectionTester } from '../workspace/connectionTester';
@@ -374,12 +375,27 @@ export class FlowVisualizerPanel {
         }
       }
 
+      const coreTransform =
+        CORE_CATALOG[`${msg.namespaceUri}:${msg.localName}`] ||
+        CORE_CATALOG[msg.localName] ||
+        CORE_CATALOG['transform'];
+      const transformGroups: ParameterGroupModel[] = (coreTransform?.groups || []).map((group) => ({
+        name: group.name,
+        parameters: group.parameters.map((p) => {
+          const actualVal = msg.attributes[p.name];
+          return {
+            ...p,
+            defaultValue: actualVal !== undefined ? actualVal : p.defaultValue,
+          };
+        }),
+      }));
+
       this.postMessage({
         type: 'updatePropertiesPanel',
         nodeId: msg.nodeId,
         displayName: 'Transform Message',
         iconId: 'core:transform',
-        groups: [],
+        groups: transformGroups,
         currentValues: msg.attributes,
         isTransform: true,
         transformData: {
@@ -590,6 +606,26 @@ export class FlowVisualizerPanel {
           };
         }),
       }));
+
+      // Also append any extra attributes present in XML that weren't declared in the schema
+      const coveredKeys = new Set(groups.flatMap((g) => g.parameters.map((p) => p.name)));
+      const extraParams: ParameterModel[] = [];
+      for (const [k, v] of Object.entries(msg.attributes)) {
+        if (!coveredKeys.has(k) && k !== 'doc:id') {
+          extraParams.push({
+            ...buildParameterModel({ name: k, defaultValue: v, required: false, group: 'General' }),
+            defaultValue: v,
+          });
+        }
+      }
+      if (extraParams.length > 0) {
+        let generalGroup = groups.find((g) => g.name === 'General');
+        if (!generalGroup) {
+          generalGroup = { name: 'General', parameters: [] };
+          groups.unshift(generalGroup);
+        }
+        generalGroup.parameters.push(...extraParams);
+      }
     } else {
       // Fallback for core components or unknown elements
       displayName = toDisplayLabel(msg.localName);

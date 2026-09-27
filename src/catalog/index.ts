@@ -134,6 +134,21 @@ export class ExtensionCatalog {
     const ns = (namespaceUri || '').toLowerCase();
     const lowerLocal = localName.toLowerCase();
 
+    // 0. Check core catalog
+    const key = `${namespaceUri || ''}:${localName}`;
+    const coreMatch =
+      CORE_CATALOG[key] ||
+      (prefix ? CORE_CATALOG[`${prefix}:${localName}`] : null) ||
+      CORE_CATALOG[localName];
+    if (coreMatch && coreMatch.groups && coreMatch.groups.length > 0) {
+      return {
+        id: coreMatch.localName,
+        displayName: coreMatch.displayName,
+        iconId: coreMatch.iconId,
+        groups: coreMatch.groups,
+      };
+    }
+
     // Helper to find in a given ExtensionModel
     const findInModel = (model: ExtensionModel): OperationModel | SourceModel | null => {
       const op = model.operations.find(

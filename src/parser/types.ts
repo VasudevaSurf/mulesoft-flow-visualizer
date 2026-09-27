@@ -39,6 +39,8 @@ export type ComponentKind =
   | 'global-config'  // never rendered on the canvas
   | 'unknown';
 
+import { ParameterGroupModel } from '../catalog/extensionModelReader';
+
 export interface ComponentDescriptor {
   namespaceUri: string;
   localName: string;
@@ -51,6 +53,8 @@ export interface ComponentDescriptor {
   chainWrapperName?: string;
   /** Attribute to prefer for the secondary label under the name. */
   subtitleAttribute?: string;   // e.g. "config-ref", "path", "expression"
+  /** Parameter groups for properties panel */
+  groups?: ParameterGroupModel[];
 }
 
 // ---------- Diagnostic layer ----------

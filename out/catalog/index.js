@@ -138,6 +138,19 @@ class ExtensionCatalog {
     static async getOperationOrSourceModel(namespaceUri, localName, prefix) {
         const ns = (namespaceUri || '').toLowerCase();
         const lowerLocal = localName.toLowerCase();
+        // 0. Check core catalog
+        const key = `${namespaceUri || ''}:${localName}`;
+        const coreMatch = coreCatalog_1.CORE_CATALOG[key] ||
+            (prefix ? coreCatalog_1.CORE_CATALOG[`${prefix}:${localName}`] : null) ||
+            coreCatalog_1.CORE_CATALOG[localName];
+        if (coreMatch && coreMatch.groups && coreMatch.groups.length > 0) {
+            return {
+                id: coreMatch.localName,
+                displayName: coreMatch.displayName,
+                iconId: coreMatch.iconId,
+                groups: coreMatch.groups,
+            };
+        }
         // Helper to find in a given ExtensionModel
         const findInModel = (model) => {
             const op = model.operations.find((o) => (o.id || o.name || o.xmlTag || '').toLowerCase() === lowerLocal);
