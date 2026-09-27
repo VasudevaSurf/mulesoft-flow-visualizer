@@ -169,6 +169,7 @@
     "@types/jszip": "^3.4.0",
     "fast-xml-parser": "^4.3.4",
     "jszip": "^3.10.1",
+    "monaco-editor": "^0.57.0",
     "saxes": "^6.0.0"
   }
 }

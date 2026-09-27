@@ -1,9 +1,46 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebviewHtmlBuilder = void 0;
+const vscode = __importStar(require("vscode"));
 class WebviewHtmlBuilder {
     static build(webview, extensionUri) {
         const nonce = this.getNonce();
+        const monacoBaseUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'monaco', 'vs'));
+        const monacoLoaderUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'monaco', 'vs', 'loader.js'));
+        const monacoCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'monaco', 'vs', 'editor', 'editor.main.css'));
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -639,6 +676,195 @@ class WebviewHtmlBuilder {
       background: rgba(0,0,0,0.15);
       cursor: default;
     }
+    .prop-widget-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+    .prop-widget-container {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+    }
+    .prop-normal-widget {
+      width: 100%;
+    }
+    .prop-fx-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--vscode-editor-font-family, monospace);
+      padding: 0 6px;
+      height: 28px;
+      line-height: 26px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+      box-sizing: border-box;
+    }
+    .prop-fx-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: var(--fg);
+      border-color: var(--accent);
+    }
+    .prop-fx-btn.active {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+      box-shadow: 0 0 6px rgba(0, 122, 204, 0.4);
+    }
+    .prop-monaco-wrapper {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--vscode-input-background, rgba(0, 0, 0, 0.2));
+      overflow: hidden;
+      box-sizing: border-box;
+      transition: border-color 0.15s ease;
+      position: relative;
+    }
+    body.theme-studio .prop-monaco-wrapper {
+      background: #ffffff;
+      border-color: var(--border);
+    }
+    .prop-monaco-wrapper:focus-within {
+      border-color: var(--accent);
+    }
+    .prop-monaco-single {
+      height: 28px;
+    }
+    .prop-monaco-multi {
+      height: 90px;
+    }
+    .prop-monaco-editor {
+      width: 100%;
+      height: 100%;
+    }
+    .prop-monaco-wrapper, .prop-monaco-editor, .prop-monaco-editor * {
+      user-select: text !important;
+    }
+    .transform-editor-layout {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 260px;
+      gap: 8px;
+    }
+    .dw-header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    body.theme-studio .dw-header-bar {
+      background: #f0f4f8;
+    }
+    .dw-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dw-badge-version {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-weight: 700;
+      color: #c586c0;
+      background: rgba(197, 134, 192, 0.15);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .dw-header-sep {
+      color: var(--text-muted);
+    }
+    .dw-header-label {
+      font-family: var(--vscode-editor-font-family, monospace);
+      color: #4fc1ff;
+      font-weight: 600;
+    }
+    .dw-output-select {
+      background: var(--vscode-dropdown-background, #252526);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      outline: none;
+    }
+    .dw-target-badge {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .dw-main-editor-wrapper {
+      flex: 1;
+      min-height: 170px;
+      height: 200px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--vscode-editor-background, #1e1e1e);
+      position: relative;
+    }
+    .dw-monaco-editor {
+      width: 100%;
+      height: 100%;
+      min-height: 170px;
+    }
+    .dw-variables-section {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .dw-variables-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .dw-variables-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .dw-var-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+    .dw-var-name {
+      width: 130px;
+      flex-shrink: 0;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+    }
+    .dw-var-val {
+      flex: 1;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+    }
     .prop-desc {
       font-size: 11px;
       color: var(--text-muted);
@@ -835,6 +1061,7 @@ class WebviewHtmlBuilder {
       border: 1px solid rgba(229, 115, 115, 0.4);
     }
   </style>
+  <link rel="stylesheet" href="${monacoCssUri}">
 </head>
 <body>
   <div id="app-container">
@@ -934,10 +1161,53 @@ class WebviewHtmlBuilder {
   </div>
 
   <script nonce="${nonce}">
+    window.MonacoEnvironment = {
+      getWorkerUrl: function(workerId, label) {
+        return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+          'self.MonacoEnvironment = { baseUrl: "' + '${monacoBaseUri}' + '/" };' +
+          'try { importScripts("' + '${monacoBaseUri}' + '/editor/editor.worker.js"); } catch(e){}'
+        );
+      }
+    };
+  </script>
+  <script nonce="${nonce}" src="${monacoLoaderUri}"></script>
+
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let currentModel = null;
     let currentScene = null;
     let selectedNodeId = null;
+
+    let monacoLoaded = false;
+    const monacoReadyQueue = [];
+    const activeMonacoEditors = new Map();
+
+    let currentAutocompleteContext = {
+      variables: [],
+      precedingPayloadShape: null
+    };
+
+    if (typeof require !== 'undefined' && require.config) {
+      require.config({
+        paths: {
+          'vs': '${monacoBaseUri}'
+        }
+      });
+      require(['vs/editor/editor.main'], function() {
+        registerDataWeaveLanguage();
+        monacoLoaded = true;
+        while (monacoReadyQueue.length > 0) {
+          const fn = monacoReadyQueue.shift();
+          try { fn(); } catch(e) { console.error('Error executing monaco callback', e); }
+        }
+      });
+    }
+
+    function getMonacoTheme() {
+      return (document.body.classList.contains('vscode-light') || document.body.classList.contains('theme-studio'))
+        ? 'dw-light'
+        : 'dw-dark';
+    }
 
     // Viewport transform state
     let scale = 1;
@@ -1175,6 +1445,9 @@ class WebviewHtmlBuilder {
           } else {
             document.body.classList.remove('theme-studio');
           }
+          if (window.monaco && monaco.editor) {
+            monaco.editor.setTheme(getMonacoTheme());
+          }
           const arrowMarker = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--lane-line)"/></marker>';
           if (msg.symbolsSvg) {
             svgDefs.innerHTML = arrowMarker + msg.symbolsSvg;
@@ -1200,6 +1473,7 @@ class WebviewHtmlBuilder {
           break;
 
         case 'updatePropertiesPanel':
+          currentAutocompleteContext = msg.autocompleteContext || { variables: [], precedingPayloadShape: null };
           renderPropertiesPanel(msg);
           break;
 
@@ -1675,6 +1949,211 @@ class WebviewHtmlBuilder {
       return html;
     }
 
+    function renderTransformEditor(data) {
+      const tabsHeader = document.getElementById('prop-tabs-header');
+      const tabsContent = document.getElementById('prop-tabs-content');
+      tabsHeader.style.display = 'none';
+      tabsContent.innerHTML = '';
+
+      const transformData = data.transformData || {
+        script: '%dw 2.0\\noutput application/json\\n---\\n{\\n}',
+        targetVariables: [],
+        outputType: 'application/json'
+      };
+
+      const container = document.createElement('div');
+      container.className = 'transform-editor-layout';
+
+      // Header Bar: %dw 2.0 / output [select]
+      const headerBar = document.createElement('div');
+      headerBar.className = 'dw-header-bar';
+
+      const leftDiv = document.createElement('div');
+      leftDiv.className = 'dw-header-left';
+      leftDiv.innerHTML = 
+        '<span class="dw-badge-version">%dw 2.0</span>' +
+        '<span class="dw-header-sep">/</span>' +
+        '<label class="dw-header-label">output</label>' +
+        '<select class="dw-output-select" id="dw-output-type">' +
+          '<option value="application/json">application/json</option>' +
+          '<option value="application/xml">application/xml</option>' +
+          '<option value="application/java">application/java</option>' +
+          '<option value="application/csv">application/csv</option>' +
+          '<option value="text/plain">text/plain</option>' +
+          '<option value="application/octet-stream">application/octet-stream</option>' +
+        '</select>';
+
+      const outputSelect = leftDiv.querySelector('#dw-output-type');
+      if (outputSelect) {
+        outputSelect.value = transformData.outputType || 'application/json';
+        if (!outputSelect.value) {
+          const opt = document.createElement('option');
+          opt.value = transformData.outputType;
+          opt.textContent = transformData.outputType;
+          opt.selected = true;
+          outputSelect.appendChild(opt);
+        }
+      }
+
+      const rightDiv = document.createElement('div');
+      rightDiv.className = 'dw-header-right';
+      rightDiv.innerHTML = '<span class="dw-target-badge">Payload (Target: payload)</span>';
+
+      headerBar.appendChild(leftDiv);
+      headerBar.appendChild(rightDiv);
+      container.appendChild(headerBar);
+
+      // Main Monaco Editor Wrapper
+      const editorWrapper = document.createElement('div');
+      editorWrapper.className = 'dw-main-editor-wrapper';
+
+      const editorHost = document.createElement('div');
+      editorHost.className = 'dw-monaco-editor';
+      editorWrapper.appendChild(editorHost);
+      container.appendChild(editorWrapper);
+
+      let mainEditor = null;
+
+      function createMainTransformEditor() {
+        if (!window.monaco || !monacoLoaded) {
+          monacoReadyQueue.push(createMainTransformEditor);
+          return;
+        }
+        if (mainEditor || !editorWrapper.isConnected) return;
+
+        mainEditor = monaco.editor.create(editorHost, {
+          value: transformData.script || '',
+          language: 'dataweave',
+          theme: getMonacoTheme(),
+          automaticLayout: true,
+          lineNumbers: 'on',
+          glyphMargin: false,
+          folding: true,
+          overviewRulerLanes: 0,
+          scrollBeyondLastLine: false,
+          wordWrap: 'on',
+          minimap: { enabled: false },
+          fixedOverflowWidgets: true,
+          tabSize: 2,
+          fontSize: 12,
+          fontFamily: 'var(--vscode-editor-font-family, Consolas, "Courier New", monospace)'
+        });
+
+        let scriptTimer;
+        mainEditor.onDidChangeModelContent(function() {
+          clearTimeout(scriptTimer);
+          scriptTimer = setTimeout(function() {
+            const raw = mainEditor.getValue();
+            sendParamUpdate(data.nodeId, '__transform_payload__', raw, 'dataweave');
+          }, 400);
+        });
+
+        activeMonacoEditors.set(data.nodeId + '::__transform_main__', mainEditor);
+        setTimeout(function() {
+          if (mainEditor) mainEditor.layout();
+        }, 30);
+      }
+
+      // Sync output directive with output dropdown
+      if (outputSelect) {
+        outputSelect.onchange = function() {
+          const newType = outputSelect.value;
+          if (mainEditor) {
+            let cur = mainEditor.getValue();
+            if (/output\\s+[a-zA-Z0-9_\\-\\/]+/.test(cur)) {
+              cur = cur.replace(/output\\s+[a-zA-Z0-9_\\-\\/]+/, 'output ' + newType);
+            } else if (cur.startsWith('%dw')) {
+              const lines = cur.split('\\n');
+              lines.splice(1, 0, 'output ' + newType);
+              cur = lines.join('\\n');
+            } else {
+              cur = '%dw 2.0\\noutput ' + newType + '\\n---\\n' + cur;
+            }
+            mainEditor.setValue(cur);
+            sendParamUpdate(data.nodeId, '__transform_payload__', cur, 'dataweave');
+          }
+        };
+      }
+
+      // Target Variables Section
+      const varsSection = document.createElement('div');
+      varsSection.className = 'dw-variables-section';
+
+      const varsHeader = document.createElement('div');
+      varsHeader.className = 'dw-variables-header';
+      varsHeader.innerHTML = 
+        '<span>Target Variables (<span id="dw-var-count">' + (transformData.targetVariables ? transformData.targetVariables.length : 0) + '</span>)</span>' +
+        '<button type="button" class="prop-btn-add" id="dw-btn-add-var">+ Add Variable</button>';
+
+      const varsList = document.createElement('div');
+      varsList.className = 'dw-variables-list';
+
+      function addVariableRow(varName, varScript) {
+        const row = document.createElement('div');
+        row.className = 'dw-var-row';
+
+        const nameInp = document.createElement('input');
+        nameInp.type = 'text';
+        nameInp.className = 'prop-input dw-var-name';
+        nameInp.value = varName || '';
+        nameInp.placeholder = 'variableName';
+
+        const valInp = document.createElement('input');
+        valInp.type = 'text';
+        valInp.className = 'prop-input dw-var-val';
+        valInp.value = varScript || '';
+        valInp.placeholder = 'DataWeave expression or value...';
+
+        let vTimer;
+        valInp.oninput = function() {
+          clearTimeout(vTimer);
+          vTimer = setTimeout(function() {
+            if (nameInp.value.trim()) {
+              sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
+            }
+          }, 400);
+        };
+        valInp.onchange = function() {
+          clearTimeout(vTimer);
+          if (nameInp.value.trim()) {
+            sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
+          }
+        };
+
+        nameInp.onchange = function() {
+          if (nameInp.value.trim()) {
+            sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
+          }
+        };
+
+        row.appendChild(nameInp);
+        row.appendChild(valInp);
+        varsList.appendChild(row);
+      }
+
+      if (transformData.targetVariables && transformData.targetVariables.length > 0) {
+        for (let i = 0; i < transformData.targetVariables.length; i++) {
+          const v = transformData.targetVariables[i];
+          addVariableRow(v.name, v.script);
+        }
+      }
+
+      varsHeader.querySelector('#dw-btn-add-var').onclick = function() {
+        const count = varsList.children.length + 1;
+        addVariableRow('variable' + count, '%dw 2.0\\noutput application/java\\n---\\npayload');
+        const countEl = varsHeader.querySelector('#dw-var-count');
+        if (countEl) countEl.textContent = String(varsList.children.length);
+      };
+
+      varsSection.appendChild(varsHeader);
+      varsSection.appendChild(varsList);
+      container.appendChild(varsSection);
+
+      tabsContent.appendChild(container);
+
+      createMainTransformEditor();
+    }
+
     function renderPropertiesPanel(data) {
       selectedNodeId = data.nodeId;
       const panel = document.getElementById('properties-panel');
@@ -1687,6 +2166,11 @@ class WebviewHtmlBuilder {
 
       if (!panel) return;
       panel.classList.remove('collapsed');
+
+      activeMonacoEditors.forEach(function(editor) {
+        try { editor.dispose(); } catch(e) {}
+      });
+      activeMonacoEditors.clear();
 
       if (emptyEl) emptyEl.style.display = 'none';
 
@@ -1708,6 +2192,12 @@ class WebviewHtmlBuilder {
 
       tabsHeader.innerHTML = '';
       tabsContent.innerHTML = '';
+      tabsHeader.style.display = '';
+
+      if (data.isTransform) {
+        renderTransformEditor(data);
+        return;
+      }
 
       if (!data.groups || data.groups.length === 0) {
         tabsContent.innerHTML = '<div class="properties-empty-state">No configurable parameters found.</div>';
@@ -1728,6 +2218,13 @@ class WebviewHtmlBuilder {
           tabsContent.querySelectorAll('.prop-tab-pane').forEach(p => p.classList.remove('active'));
           btn.classList.add('active');
           pane.classList.add('active');
+          setTimeout(() => {
+            activeMonacoEditors.forEach(ed => {
+              if (ed.getDomNode() && ed.getDomNode().offsetParent !== null) {
+                ed.layout();
+              }
+            });
+          }, 30);
         };
 
         tabsHeader.appendChild(btn);
@@ -1759,7 +2256,15 @@ class WebviewHtmlBuilder {
               parentPanel.querySelectorAll('[data-param-name]').forEach(function(input) {
                 const pName = input.getAttribute('data-param-name');
                 if (!pName) return;
-                if (input.type === 'checkbox') {
+                if (input.style.display === 'none' || (input.parentElement && input.parentElement.style.display === 'none')) {
+                  return;
+                }
+                const nodeKey = (selectedNodeId || 'global') + '::' + pName;
+                if (activeMonacoEditors.has(nodeKey)) {
+                  currentAttrs[pName] = activeMonacoEditors.get(nodeKey).getValue();
+                } else if (input.getAttribute('data-pending-val') !== null) {
+                  currentAttrs[pName] = input.getAttribute('data-pending-val');
+                } else if (input.type === 'checkbox') {
                   currentAttrs[pName] = input.checked ? 'true' : 'false';
                 } else if (input.value !== undefined && input.value !== null && input.value !== '') {
                   currentAttrs[pName] = input.value;
@@ -1795,6 +2300,563 @@ class WebviewHtmlBuilder {
         resDiv.textContent = (msg.success ? '✓ ' : '✕ ') + msg.message;
         resDiv.style.display = 'block';
       }
+    }
+
+    const fieldExpressionModes = {};
+    const lastNonExpressionValues = {};
+
+    function wrapExpression(val) {
+      if (val === undefined || val === null) return '#[]';
+      let s;
+      if (Array.isArray(val)) {
+        s = '[' + val.map(function(item) { return typeof item === 'string' ? "'" + item + "'" : String(item); }).join(', ') + ']';
+      } else if (typeof val === 'object') {
+        s = JSON.stringify(val);
+      } else {
+        s = String(val).trim();
+      }
+      if (!s) return '#[]';
+      if (s.startsWith('#[') && s.endsWith(']')) return s;
+      if (s.startsWith('#[')) return s + ']';
+      return '#[' + s + ']';
+    }
+
+    function unwrapExpression(val) {
+      if (val === undefined || val === null) return '';
+      const s = String(val).trim();
+      if (s.startsWith('#[') && s.endsWith(']')) {
+        return s.slice(2, -1).trim();
+      }
+      return s;
+    }
+
+    function registerDataWeaveLanguage() {
+      if (!window.monaco || !monaco.languages) return;
+
+      monaco.languages.register({ id: 'dataweave', extensions: ['.dwl'] });
+
+      monaco.languages.setLanguageConfiguration('dataweave', {
+        comments: {
+          lineComment: '//',
+          blockComment: ['/*', '*/']
+        },
+        brackets: [
+          ['{', '}'],
+          ['[', ']'],
+          ['(', ')']
+        ],
+        autoClosingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+          { open: "'", close: "'" }
+        ],
+        surroundingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+          { open: "'", close: "'" }
+        ]
+      });
+
+      monaco.languages.setMonarchTokensProvider('dataweave', {
+        defaultToken: '',
+        tokenPostfix: '.dw',
+
+        keywords: [
+          'var', 'fun', 'import', 'ns', 'type',
+          'if', 'else', 'match', 'case', 'default',
+          'as', 'is', 'do', 'using', 'unless',
+          'true', 'false', 'null'
+        ],
+
+        directives: [
+          'output', 'input', 'ns', 'type'
+        ],
+
+        operators: [
+          '---', '->', ':=', '==', '~=', '!=', '<=', '>=',
+          '++', '--', '>>', '<<',
+          '+', '-', '*', '/', '%', '=', '<', '>', '?', '!', '~'
+        ],
+
+        symbols: /[=><!~?:&|+\\-*\\/\\^%]+/,
+
+        tokenizer: {
+          root: [
+            // %dw header directive
+            [/^%dw\\b.*$/, 'keyword.header'],
+
+            // Output/input directives
+            [/^\\s*(output|input|ns|type)\\b/, 'keyword.directive'],
+
+            // Body separator
+            [/^---$/, 'operator.separator'],
+
+            // Mule expression brackets #[ and ]
+            [/^#\\[/, 'delimiter.bracket'],
+            [/\\]$/, 'delimiter.bracket'],
+
+            // Whitespace & comments
+            { include: '@whitespace' },
+
+            // Keywords and identifiers
+            [/[a-zA-Z_]\\w*/, {
+              cases: {
+                '@keywords': 'keyword',
+                '@directives': 'keyword.directive',
+                '@default': 'identifier'
+              }
+            }],
+
+            // Delimiters and operators
+            [/---/, 'operator.separator'],
+            [/@symbols/, {
+              cases: {
+                '@operators': 'operator',
+                '@default': ''
+              }
+            }],
+
+            // Numbers
+            [/\\d*\\.\\d+([eE][\\-+]?\\d+)?/, 'number.float'],
+            [/\\d+/, 'number'],
+
+            // Strings
+            [/"([^"\\\\]|\\\\.)*$/, 'string.invalid'],
+            [/"/, { token: 'string.quote', bracket: '@open', next: '@string_double' }],
+            [/'([^'\\\\]|\\\\.)*'/, 'string'],
+
+            // Brackets & delimiters
+            [/[{}()\\[\\]]/, '@brackets'],
+            [/[,.:]/, 'delimiter'],
+          ],
+
+          whitespace: [
+            [/[ \\t\\r\\n]+/, 'white'],
+            [/\\/\\*/, 'comment', '@comment'],
+            [/\\/\\/.*$/, 'comment'],
+          ],
+
+          comment: [
+            [/[^\\/*]+/, 'comment'],
+            [/\\/\\*/, 'comment.invalid'],
+            ["\\*/", 'comment', '@pop'],
+            [/[\\/*]/, 'comment']
+          ],
+
+          string_double: [
+            [/[^\\"$]+/, 'string'],
+            [/\\\\./, 'string.escape'],
+            [/[\\$]\\(/, { token: 'variable.predefined', bracket: '@open', next: '@interpolation' }],
+            [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+            [/[\\$]/, 'string']
+          ],
+
+          interpolation: [
+            [/\\)/, { token: 'variable.predefined', bracket: '@close', next: '@pop' }],
+            { include: 'root' }
+          ]
+        }
+      });
+
+      monaco.editor.defineTheme('dw-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [
+          { token: 'keyword.header', foreground: 'C586C0', fontStyle: 'bold' },
+          { token: 'keyword.directive', foreground: '4FC1FF', fontStyle: 'bold' },
+          { token: 'operator.separator', foreground: 'DCDCAA', fontStyle: 'bold' },
+          { token: 'variable.predefined', foreground: '4EC9B0' },
+          { token: 'delimiter.bracket', foreground: 'FFD700', fontStyle: 'bold' }
+        ],
+        colors: {
+          'editor.background': '#1e1e1e00',
+          'editorGutter.background': '#1e1e1e00'
+        }
+      });
+
+      monaco.editor.defineTheme('dw-light', {
+        base: 'vs',
+        inherit: true,
+        rules: [
+          { token: 'keyword.header', foreground: 'AF00DB', fontStyle: 'bold' },
+          { token: 'keyword.directive', foreground: '0000FF', fontStyle: 'bold' },
+          { token: 'operator.separator', foreground: '795E26', fontStyle: 'bold' },
+          { token: 'variable.predefined', foreground: '267F99' },
+          { token: 'delimiter.bracket', foreground: '00008B', fontStyle: 'bold' }
+        ],
+        colors: {
+          'editor.background': '#ffffff00',
+          'editorGutter.background': '#ffffff00'
+        }
+      });
+
+      monaco.languages.registerCompletionItemProvider('dataweave', {
+        triggerCharacters: ['.', ' ', '#', '['],
+        provideCompletionItems: function(model, position) {
+          const textUntilPosition = model.getValueInRange({
+            startLineNumber: position.lineNumber,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          });
+
+          const wordInfo = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: wordInfo.startColumn,
+            endColumn: wordInfo.endColumn
+          };
+
+          const suggestions = [];
+
+          // 1. Dot completions on vars (e.g. vars. or vars.foo)
+          const varsMatch = textUntilPosition.match(/vars\\.([a-zA-Z0-9_]*)$/);
+          if (varsMatch) {
+            if (currentAutocompleteContext && currentAutocompleteContext.variables) {
+              currentAutocompleteContext.variables.forEach(function(v) {
+                suggestions.push({
+                  label: v.name,
+                  kind: monaco.languages.CompletionItemKind.Variable,
+                  documentation: v.type
+                    ? 'Variable defined earlier in flow via Set Variable (' + v.type + ')'
+                    : 'Variable defined earlier in flow via Set Variable',
+                  detail: v.type || 'Variable',
+                  insertText: v.name,
+                  range: range
+                });
+              });
+            }
+            return { suggestions: suggestions };
+          }
+
+          // 2. Dot completions on payload sub-object (e.g. payload.customer.id)
+          const payloadSubMatch = textUntilPosition.match(/payload\\.([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]*)$/);
+          if (payloadSubMatch) {
+            const parentName = payloadSubMatch[1];
+            if (currentAutocompleteContext && currentAutocompleteContext.precedingPayloadShape && currentAutocompleteContext.precedingPayloadShape.fields) {
+              const parentField = currentAutocompleteContext.precedingPayloadShape.fields.find(function(f) {
+                return f.name === parentName;
+              });
+              if (parentField && parentField.children && parentField.children.length > 0) {
+                parentField.children.forEach(function(childName) {
+                  suggestions.push({
+                    label: childName,
+                    kind: monaco.languages.CompletionItemKind.Field,
+                    documentation: 'Sub-field of payload.' + parentName + ' from preceding Transform Message',
+                    detail: 'Field',
+                    insertText: childName,
+                    range: range
+                  });
+                });
+              }
+            }
+            return { suggestions: suggestions };
+          }
+
+          // 3. Dot completions on payload (e.g. payload. or payload.orderId)
+          const payloadMatch = textUntilPosition.match(/payload\\.([a-zA-Z0-9_]*)$/);
+          if (payloadMatch) {
+            if (currentAutocompleteContext && currentAutocompleteContext.precedingPayloadShape && currentAutocompleteContext.precedingPayloadShape.fields) {
+              const outType = currentAutocompleteContext.precedingPayloadShape.outputType;
+              currentAutocompleteContext.precedingPayloadShape.fields.forEach(function(f) {
+                suggestions.push({
+                  label: f.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  documentation: outType
+                    ? 'Field declared by immediately preceding Transform Message (' + outType + ')'
+                    : 'Field declared by immediately preceding Transform Message',
+                  detail: outType ? outType + ' field' : 'Field',
+                  insertText: f.name,
+                  range: range
+                });
+              });
+            }
+            // Explicitly return empty suggestions if no static information is available for payload
+            return { suggestions: suggestions };
+          }
+
+          // 4. General / Top-level context roots and variables
+          const muleRoots = [
+            { label: 'payload', detail: 'Current message payload', kind: monaco.languages.CompletionItemKind.Keyword, doc: 'The main data content of the Mule message.' },
+            { label: 'vars', detail: 'Mule flow variables', kind: monaco.languages.CompletionItemKind.Keyword, doc: 'Map of variables defined in the current flow.' },
+            { label: 'attributes', detail: 'Message attributes', kind: monaco.languages.CompletionItemKind.Keyword, doc: 'Metadata associated with the message (headers, query params, etc.).' },
+            { label: 'message', detail: 'Mule message', kind: monaco.languages.CompletionItemKind.Keyword, doc: 'Container representing payload and attributes.' },
+            { label: 'error', detail: 'Error object', kind: monaco.languages.CompletionItemKind.Keyword, doc: 'Current error object during error handling.' }
+          ];
+
+          muleRoots.forEach(function(r) {
+            suggestions.push({
+              label: r.label,
+              kind: r.kind,
+              detail: r.detail,
+              documentation: r.doc,
+              insertText: r.label,
+              range: range
+            });
+          });
+
+          if (currentAutocompleteContext && currentAutocompleteContext.variables) {
+            currentAutocompleteContext.variables.forEach(function(v) {
+              suggestions.push({
+                label: 'vars.' + v.name,
+                kind: monaco.languages.CompletionItemKind.Variable,
+                detail: v.type || 'Variable',
+                documentation: 'Flow variable: ' + v.name,
+                insertText: 'vars.' + v.name,
+                range: range
+              });
+            });
+          }
+
+          if (!textUntilPosition.includes('---')) {
+            const dollar = String.fromCharCode(36);
+            const directives = [
+              { label: '%dw 2.0', detail: 'Header directive', insert: '%dw 2.0\\n' },
+              { label: 'output application/json', detail: 'JSON output', insert: 'output application/json\\n' },
+              { label: 'output application/xml', detail: 'XML output', insert: 'output application/xml\\n' },
+              { label: 'output application/java', detail: 'Java output', insert: 'output application/java\\n' },
+              { label: 'var', detail: 'Variable declaration', insert: 'var ' + dollar + '{1:name} = ' + dollar + '{2:value}' },
+              { label: 'fun', detail: 'Function declaration', insert: 'fun ' + dollar + '{1:name}(' + dollar + '{2:param}) = ' + dollar + '{3:body}' },
+              { label: 'import', detail: 'Module import', insert: 'import * from dw::core::' + dollar + '{1:Strings}' }
+            ];
+            directives.forEach(function(d) {
+              suggestions.push({
+                label: d.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: d.detail,
+                insertText: d.insert,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range: range
+              });
+            });
+          }
+
+          return { suggestions: suggestions };
+        }
+      });
+    }
+
+    function attachExpressionToggle(opts) {
+      const formGroup = opts.formGroup;
+      const param = opts.param;
+      const val = opts.val;
+      const normalWidget = opts.normalWidget;
+      const isMultiLine = opts.isMultiLine;
+      const getNormalVal = opts.getNormalVal;
+      const setNormalVal = opts.setNormalVal;
+
+      if (!param || !param.supportsExpression) {
+        formGroup.appendChild(normalWidget);
+        return formGroup;
+      }
+
+      const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+      let isFx = false;
+      if (fieldExpressionModes[nodeKey] !== undefined) {
+        isFx = fieldExpressionModes[nodeKey] === true;
+      } else if (typeof val === 'string' && val.trim().startsWith('#[')) {
+        isFx = true;
+        fieldExpressionModes[nodeKey] = true;
+      } else {
+        isFx = false;
+        fieldExpressionModes[nodeKey] = false;
+      }
+
+      if (!isFx && val !== undefined && val !== null) {
+        lastNonExpressionValues[nodeKey] = val;
+      }
+
+      const row = document.createElement('div');
+      row.className = 'prop-widget-row';
+      if (isMultiLine) {
+        row.style.alignItems = 'flex-start';
+      }
+
+      const container = document.createElement('div');
+      container.className = 'prop-widget-container';
+
+      const expWrapper = document.createElement('div');
+      expWrapper.className = 'prop-monaco-wrapper ' + (isMultiLine ? 'prop-monaco-multi' : 'prop-monaco-single');
+      expWrapper.setAttribute('data-param-name', param.name);
+
+      const monacoHost = document.createElement('div');
+      monacoHost.className = 'prop-monaco-editor';
+      expWrapper.appendChild(monacoHost);
+
+      let monacoEditorInstance = null;
+
+      function getEditorVal() {
+        if (monacoEditorInstance) {
+          return monacoEditorInstance.getValue();
+        }
+        return expWrapper.getAttribute('data-pending-val') || '';
+      }
+
+      function setEditorVal(newVal) {
+        expWrapper.setAttribute('data-pending-val', newVal);
+        if (monacoEditorInstance) {
+          if (monacoEditorInstance.getValue() !== newVal) {
+            monacoEditorInstance.setValue(newVal);
+          }
+        }
+      }
+
+      function createEditor() {
+        if (!window.monaco || !monacoLoaded) {
+          monacoReadyQueue.push(createEditor);
+          return;
+        }
+        if (monacoEditorInstance) return;
+        if (!expWrapper.isConnected) return;
+
+        const initVal = expWrapper.getAttribute('data-pending-val') !== null
+          ? expWrapper.getAttribute('data-pending-val')
+          : (isFx ? wrapExpression(val) : '');
+
+        monacoEditorInstance = monaco.editor.create(monacoHost, {
+          value: initVal,
+          language: 'dataweave',
+          theme: getMonacoTheme(),
+          automaticLayout: true,
+          lineNumbers: 'off',
+          glyphMargin: false,
+          folding: false,
+          lineDecorationsWidth: 0,
+          lineNumbersMinChars: 0,
+          overviewRulerLanes: 0,
+          overviewRulerBorder: false,
+          hideCursorInOverviewRuler: true,
+          scrollbar: isMultiLine ? { vertical: 'auto', horizontal: 'auto' } : { vertical: 'hidden', horizontal: 'hidden', handleMouseWheel: false },
+          scrollBeyondLastLine: false,
+          wordWrap: isMultiLine ? 'on' : 'off',
+          minimap: { enabled: false },
+          renderLineHighlight: 'none',
+          contextmenu: false,
+          fixedOverflowWidgets: true,
+          tabSize: 2,
+          fontSize: 12,
+          lineHeight: isMultiLine ? 18 : 20,
+          padding: { top: isMultiLine ? 4 : 3, bottom: isMultiLine ? 4 : 3 },
+          fontFamily: 'var(--vscode-editor-font-family, Consolas, "Courier New", monospace)'
+        });
+
+        if (!isMultiLine) {
+          monacoEditorInstance.addCommand(monaco.KeyCode.Enter, function() {});
+        }
+
+        let editTimer;
+        monacoEditorInstance.onDidChangeModelContent(function() {
+          clearTimeout(editTimer);
+          editTimer = setTimeout(function() {
+            const raw = monacoEditorInstance.getValue();
+            expWrapper.setAttribute('data-pending-val', raw);
+            sendParamUpdate(selectedNodeId, param.name, raw, 'string');
+          }, 400);
+        });
+
+        activeMonacoEditors.set(nodeKey, monacoEditorInstance);
+
+        if (isFx) {
+          setTimeout(function() {
+            if (monacoEditorInstance) monacoEditorInstance.layout();
+          }, 20);
+        }
+      }
+
+      if (isFx) {
+        setEditorVal(wrapExpression(val));
+        normalWidget.style.display = 'none';
+        expWrapper.style.display = '';
+        createEditor();
+      } else {
+        setEditorVal('');
+        normalWidget.style.display = '';
+        expWrapper.style.display = 'none';
+      }
+
+      const fxBtn = document.createElement('button');
+      fxBtn.type = 'button';
+      fxBtn.className = 'prop-fx-btn' + (isFx ? ' active' : '');
+      fxBtn.title = isFx ? 'Switch to literal mode' : 'Switch to expression mode (#[...])';
+      fxBtn.textContent = 'fx';
+
+      fxBtn.onclick = function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const currentlyFx = fieldExpressionModes[nodeKey] === true;
+        const newFx = !currentlyFx;
+        fieldExpressionModes[nodeKey] = newFx;
+
+        if (newFx) {
+          const curVal = getNormalVal();
+          lastNonExpressionValues[nodeKey] = curVal;
+          const wrapped = wrapExpression(curVal);
+          setEditorVal(wrapped);
+          normalWidget.style.display = 'none';
+          expWrapper.style.display = '';
+          fxBtn.classList.add('active');
+          fxBtn.title = 'Switch to literal mode';
+          if (!monacoEditorInstance) {
+            createEditor();
+          } else {
+            setTimeout(function() {
+              monacoEditorInstance.layout();
+              monacoEditorInstance.focus();
+            }, 20);
+          }
+          sendParamUpdate(selectedNodeId, param.name, wrapped, 'string');
+        } else {
+          const currentExp = getEditorVal();
+          const stripped = unwrapExpression(currentExp);
+          let targetVal = stripped;
+          if (param.dataType === 'boolean') {
+            if (stripped === 'true' || stripped === 'false') {
+              targetVal = stripped;
+            } else if (lastNonExpressionValues[nodeKey] !== undefined) {
+              targetVal = lastNonExpressionValues[nodeKey];
+            }
+          } else if (param.dataType === 'number') {
+            if (stripped !== '' && !isNaN(Number(stripped))) {
+              targetVal = stripped;
+            } else if (lastNonExpressionValues[nodeKey] !== undefined) {
+              targetVal = lastNonExpressionValues[nodeKey];
+            }
+          } else if (param.dataType === 'enum') {
+            const allowed = param.allowedValues || [];
+            const matches = allowed.some(function(a) { return a.toUpperCase() === stripped.toUpperCase(); });
+            if (matches) {
+              targetVal = stripped;
+            } else if (lastNonExpressionValues[nodeKey] !== undefined) {
+              targetVal = lastNonExpressionValues[nodeKey];
+            }
+          } else if (param.dataType === 'list') {
+            if (lastNonExpressionValues[nodeKey] !== undefined && stripped.startsWith('[')) {
+              targetVal = lastNonExpressionValues[nodeKey];
+            }
+          }
+          lastNonExpressionValues[nodeKey] = targetVal;
+          setNormalVal(targetVal);
+          expWrapper.style.display = 'none';
+          normalWidget.style.display = '';
+          fxBtn.classList.remove('active');
+          fxBtn.title = 'Switch to expression mode (#[...])';
+          const finalVal = getNormalVal();
+          sendParamUpdate(selectedNodeId, param.name, finalVal, param.dataType);
+        }
+      };
+
+      container.appendChild(normalWidget);
+      container.appendChild(expWrapper);
+      row.appendChild(container);
+      row.appendChild(fxBtn);
+
+      formGroup.appendChild(row);
+      return formGroup;
     }
 
     function renderFormControl(param, currentValues) {
@@ -1868,47 +2930,112 @@ class WebviewHtmlBuilder {
 
       // 3. Boolean - Checkbox
       if (param.dataType === 'boolean') {
-        div.className = 'prop-form-group prop-form-checkbox';
         const isChecked = val === true || val === 'true';
+
         div.innerHTML = 
-          '<label class="prop-checkbox-label">' +
+          '<label class="prop-label">' +
+            escapeHtml(param.label) + ' ' + reqAsterisk +
+            '<span class="prop-type-badge">boolean</span>' +
+          '</label>';
+
+        const normalWidget = document.createElement('div');
+        normalWidget.className = 'prop-normal-widget';
+        normalWidget.innerHTML = 
+          '<label class="prop-checkbox-label" style="margin: 0; padding: 4px 0; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">' +
             '<input type="checkbox" data-param-name="' + escapeHtml(param.name) + '" ' + (isChecked ? 'checked' : '') + ' />' +
-            '<span>' + escapeHtml(param.label) + '</span>' +
-            reqAsterisk +
-          '</label>' +
-          (param.description ? '<div class="prop-desc">' + escapeHtml(param.description) + '</div>' : '');
-        const cb = div.querySelector('input[type="checkbox"]');
+            '<span class="prop-bool-status" style="font-family: var(--vscode-editor-font-family, monospace); font-size: 11px;">' + (isChecked ? 'true' : 'false') + '</span>' +
+          '</label>';
+
+        const cb = normalWidget.querySelector('input[type="checkbox"]');
+        const statusSpan = normalWidget.querySelector('.prop-bool-status');
         if (cb) {
           cb.onchange = function() {
-            sendParamUpdate(selectedNodeId, param.name, cb.checked ? 'true' : 'false', 'boolean');
+            const curVal = cb.checked ? 'true' : 'false';
+            if (statusSpan) statusSpan.textContent = curVal;
+            const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+            lastNonExpressionValues[nodeKey] = curVal;
+            sendParamUpdate(selectedNodeId, param.name, curVal, 'boolean');
           };
+        }
+
+        attachExpressionToggle({
+          formGroup: div,
+          param: param,
+          val: val,
+          normalWidget: normalWidget,
+          isMultiLine: false,
+          getNormalVal: function() { return cb && cb.checked ? 'true' : 'false'; },
+          setNormalVal: function(v) {
+            if (cb) {
+              cb.checked = (v === true || v === 'true');
+              if (statusSpan) statusSpan.textContent = cb.checked ? 'true' : 'false';
+            }
+          }
+        });
+
+        if (param.description) {
+          const desc = document.createElement('div');
+          desc.className = 'prop-desc';
+          desc.textContent = param.description;
+          div.appendChild(desc);
         }
         return div;
       }
 
       // 4. Enum - <select>
       if (param.dataType === 'enum') {
-        const allowed = param.allowedValues || ['DEFAULT'];
-        const optionsHtml = allowed
-          .map(function(opt) {
-            return '<option value="' + escapeHtml(opt) + '" ' + (String(val).toUpperCase() === opt.toUpperCase() ? 'selected' : '') + '>' + escapeHtml(opt) + '</option>';
-          })
-          .join('');
-
         div.innerHTML = 
           '<label class="prop-label">' +
             escapeHtml(param.label) + ' ' + reqAsterisk +
             '<span class="prop-type-badge">enum</span>' +
-          '</label>' +
-          '<select class="prop-select" data-param-name="' + escapeHtml(param.name) + '">' +
-            optionsHtml +
-          '</select>' +
-          (param.description ? '<div class="prop-desc">' + escapeHtml(param.description) + '</div>' : '');
-        const sel = div.querySelector('select');
-        if (sel) {
-          sel.onchange = function() {
-            sendParamUpdate(selectedNodeId, param.name, sel.value, 'enum');
-          };
+          '</label>';
+
+        const allowed = param.allowedValues || ['DEFAULT'];
+        const normalWidget = document.createElement('select');
+        normalWidget.className = 'prop-select prop-normal-widget';
+        normalWidget.setAttribute('data-param-name', param.name);
+        let optionsHtml = '';
+        for (let i = 0; i < allowed.length; i++) {
+          const opt = allowed[i];
+          const isSel = (String(val).toUpperCase() === opt.toUpperCase()) ? ' selected' : '';
+          optionsHtml += '<option value="' + escapeHtml(opt) + '"' + isSel + '>' + escapeHtml(opt) + '</option>';
+        }
+        normalWidget.innerHTML = optionsHtml;
+
+        normalWidget.onchange = function() {
+          const curVal = normalWidget.value;
+          const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+          lastNonExpressionValues[nodeKey] = curVal;
+          sendParamUpdate(selectedNodeId, param.name, curVal, 'enum');
+        };
+
+        attachExpressionToggle({
+          formGroup: div,
+          param: param,
+          val: val,
+          normalWidget: normalWidget,
+          isMultiLine: false,
+          getNormalVal: function() { return normalWidget.value; },
+          setNormalVal: function(v) {
+            if (v !== undefined && v !== null) {
+              normalWidget.value = v;
+              if (!normalWidget.value) {
+                for (let i = 0; i < normalWidget.options.length; i++) {
+                  if (normalWidget.options[i].value.toUpperCase() === String(v).toUpperCase()) {
+                    normalWidget.selectedIndex = i;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        if (param.description) {
+          const desc = document.createElement('div');
+          desc.className = 'prop-desc';
+          desc.textContent = param.description;
+          div.appendChild(desc);
         }
         return div;
       }
@@ -1918,23 +3045,36 @@ class WebviewHtmlBuilder {
         div.className = 'prop-form-group prop-list-group';
         const items = Array.isArray(val) ? val : (val ? [val] : []);
 
-        const headerDiv = document.createElement('div');
-        headerDiv.className = 'prop-list-header';
-        headerDiv.innerHTML = 
+        div.innerHTML = 
           '<label class="prop-label">' +
             escapeHtml(param.label) + ' ' + reqAsterisk +
             '<span class="prop-type-badge">list</span>' +
-          '</label>' +
+          '</label>';
+
+        const normalWidget = document.createElement('div');
+        normalWidget.className = 'prop-normal-widget';
+
+        const listHeader = document.createElement('div');
+        listHeader.className = 'prop-list-header';
+        listHeader.innerHTML = 
+          '<span style="font-size: 11px; color: var(--text-muted);">Items</span>' +
           '<button type="button" class="prop-btn-add">+ Add</button>';
 
         const itemsContainer = document.createElement('div');
         itemsContainer.className = 'prop-list-items';
 
-        function notifyListChange() {
+        function getListValues() {
           const vals = [];
           itemsContainer.querySelectorAll('.prop-input').forEach(function(inp) {
             if (inp.value.trim() !== '') vals.push(inp.value.trim());
           });
+          return vals;
+        }
+
+        function notifyListChange() {
+          const vals = getListValues();
+          const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+          lastNonExpressionValues[nodeKey] = vals;
           sendParamUpdate(selectedNodeId, param.name, vals, 'list');
         }
 
@@ -1968,13 +3108,32 @@ class WebviewHtmlBuilder {
           addItemRow();
         }
 
-        headerDiv.querySelector('.prop-btn-add').onclick = function() {
+        listHeader.querySelector('.prop-btn-add').onclick = function() {
           addItemRow();
           notifyListChange();
         };
 
-        div.appendChild(headerDiv);
-        div.appendChild(itemsContainer);
+        normalWidget.appendChild(listHeader);
+        normalWidget.appendChild(itemsContainer);
+
+        attachExpressionToggle({
+          formGroup: div,
+          param: param,
+          val: val,
+          normalWidget: normalWidget,
+          isMultiLine: true,
+          getNormalVal: function() { return getListValues(); },
+          setNormalVal: function(v) {
+            itemsContainer.innerHTML = '';
+            const newItems = Array.isArray(v) ? v : (v ? [v] : []);
+            if (newItems.length > 0) {
+              newItems.forEach(function(it) { addItemRow(it); });
+            } else {
+              addItemRow();
+            }
+          }
+        });
+
         if (param.description) {
           const desc = document.createElement('div');
           desc.className = 'prop-desc';
@@ -1995,24 +3154,54 @@ class WebviewHtmlBuilder {
           '<summary class="prop-complex-summary">' +
             '<span>' + escapeHtml(param.label) + '</span> ' + reqAsterisk +
             '<span class="prop-type-badge">object</span>' +
-          '</summary>' +
-          '<div class="prop-complex-body">' +
-            '<textarea class="prop-textarea" data-param-name="' + escapeHtml(param.name) + '" rows="3" placeholder="key: value or DataWeave expression...">' + escapeHtml(strVal) + '</textarea>' +
-          '</div>' +
-          (param.description ? '<div class="prop-desc" style="margin-top: 6px;">' + escapeHtml(param.description) + '</div>' : '');
-        const ta = details.querySelector('textarea');
-        if (ta) {
-          let timer;
-          ta.oninput = function() {
-            clearTimeout(timer);
-            timer = setTimeout(function() {
-              sendParamUpdate(selectedNodeId, param.name, ta.value, 'complex-object');
-            }, 500);
-          };
-          ta.onchange = function() {
-            clearTimeout(timer);
-            sendParamUpdate(selectedNodeId, param.name, ta.value, 'complex-object');
-          };
+          '</summary>';
+
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'prop-complex-body';
+
+        const normalWidget = document.createElement('textarea');
+        normalWidget.className = 'prop-textarea prop-normal-widget';
+        normalWidget.setAttribute('data-param-name', param.name);
+        normalWidget.rows = 3;
+        normalWidget.placeholder = 'key: value or DataWeave expression...';
+        normalWidget.value = strVal;
+
+        let objTimer;
+        normalWidget.oninput = function() {
+          clearTimeout(objTimer);
+          objTimer = setTimeout(function() {
+            const curVal = normalWidget.value;
+            const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+            lastNonExpressionValues[nodeKey] = curVal;
+            sendParamUpdate(selectedNodeId, param.name, curVal, 'complex-object');
+          }, 500);
+        };
+        normalWidget.onchange = function() {
+          clearTimeout(objTimer);
+          const curVal = normalWidget.value;
+          const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+          lastNonExpressionValues[nodeKey] = curVal;
+          sendParamUpdate(selectedNodeId, param.name, curVal, 'complex-object');
+        };
+
+        attachExpressionToggle({
+          formGroup: bodyDiv,
+          param: param,
+          val: strVal,
+          normalWidget: normalWidget,
+          isMultiLine: true,
+          getNormalVal: function() { return normalWidget.value; },
+          setNormalVal: function(v) { normalWidget.value = (v !== undefined && v !== null) ? String(v) : ''; }
+        });
+
+        details.appendChild(bodyDiv);
+
+        if (param.description) {
+          const desc = document.createElement('div');
+          desc.className = 'prop-desc';
+          desc.style.marginTop = '6px';
+          desc.textContent = param.description;
+          details.appendChild(desc);
         }
         return details;
       }
@@ -2023,22 +3212,48 @@ class WebviewHtmlBuilder {
         '<label class="prop-label">' +
           escapeHtml(param.label) + ' ' + reqAsterisk +
           (param.dataType === 'number' ? '<span class="prop-type-badge">number</span>' : '') +
-        '</label>' +
-        '<input type="' + inputType + '" class="prop-input" data-param-name="' + escapeHtml(param.name) + '" value="' + escapeHtml(String(val)) + '" placeholder="' + escapeHtml(param.defaultValue !== undefined && param.defaultValue !== null ? String(param.defaultValue) : '') + '" />' +
-        (param.description ? '<div class="prop-desc">' + escapeHtml(param.description) + '</div>' : '');
-      const inp = div.querySelector('input');
-      if (inp) {
-        let timer;
-        inp.oninput = function() {
-          clearTimeout(timer);
-          timer = setTimeout(function() {
-            sendParamUpdate(selectedNodeId, param.name, inp.value, param.dataType);
-          }, 400);
-        };
-        inp.onchange = function() {
-          clearTimeout(timer);
-          sendParamUpdate(selectedNodeId, param.name, inp.value, param.dataType);
-        };
+        '</label>';
+
+      const normalWidget = document.createElement('input');
+      normalWidget.type = inputType;
+      normalWidget.className = 'prop-input prop-normal-widget';
+      normalWidget.setAttribute('data-param-name', param.name);
+      normalWidget.value = String(val !== undefined && val !== null ? val : '');
+      normalWidget.placeholder = String(param.defaultValue !== undefined && param.defaultValue !== null ? param.defaultValue : '');
+
+      let normalTimer;
+      normalWidget.oninput = function() {
+        clearTimeout(normalTimer);
+        normalTimer = setTimeout(function() {
+          const curVal = normalWidget.value;
+          const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+          lastNonExpressionValues[nodeKey] = curVal;
+          sendParamUpdate(selectedNodeId, param.name, curVal, param.dataType);
+        }, 400);
+      };
+      normalWidget.onchange = function() {
+        clearTimeout(normalTimer);
+        const curVal = normalWidget.value;
+        const nodeKey = (selectedNodeId || 'global') + '::' + param.name;
+        lastNonExpressionValues[nodeKey] = curVal;
+        sendParamUpdate(selectedNodeId, param.name, curVal, param.dataType);
+      };
+
+      attachExpressionToggle({
+        formGroup: div,
+        param: param,
+        val: val,
+        normalWidget: normalWidget,
+        isMultiLine: false,
+        getNormalVal: function() { return normalWidget.value; },
+        setNormalVal: function(v) { normalWidget.value = (v !== undefined && v !== null) ? String(v) : ''; }
+      });
+
+      if (param.description) {
+        const desc = document.createElement('div');
+        desc.className = 'prop-desc';
+        desc.textContent = param.description;
+        div.appendChild(desc);
       }
       return div;
     }

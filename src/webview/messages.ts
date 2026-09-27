@@ -21,6 +21,19 @@ export type HostToWebviewMessage =
       testConnectionAvailable?: boolean;
       namespaceUri?: string;
       localName?: string;
+      isTransform?: boolean;
+      transformData?: {
+        script: string;
+        targetVariables: Array<{ name: string; script: string }>;
+        outputType?: string;
+      };
+      autocompleteContext?: {
+        variables: Array<{ name: string; type?: string }>;
+        precedingPayloadShape?: {
+          outputType?: string;
+          fields: Array<{ name: string; children?: string[] }>;
+        };
+      };
     }
   | {
       type: 'testConnectionResult';

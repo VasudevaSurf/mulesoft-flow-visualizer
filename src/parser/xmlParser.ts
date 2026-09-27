@@ -26,27 +26,14 @@ export class MuleXmlParser {
     }
 
     try {
-      const root = this.doParse(xmlContent);
+      const cleanXml = this.sanitizeAttributes(xmlContent);
+      const { root, errors } = this.doParse(cleanXml);
       if (root) {
         this.lastGoodResult = root;
         return { root, error: null };
       }
-      return { root: this.lastGoodResult, error: 'Empty XML document' };
+      return { root: this.lastGoodResult, error: errors.length > 0 ? errors[0] : 'Empty XML document' };
     } catch (e: any) {
-      // Auto-recover if error was caused by unescaped '<' inside DataWeave expressions in attributes (e.g. #[a <= b])
-      try {
-        const sanitized = this.sanitizeAttributes(xmlContent);
-        if (sanitized !== xmlContent) {
-          const root = this.doParse(sanitized);
-          if (root) {
-            this.lastGoodResult = root;
-            return { root, error: null };
-          }
-        }
-      } catch {
-        // Ignore fallback error and report original
-      }
-
       const errorMessage = e?.message || String(e);
       return {
         root: this.lastGoodResult,
@@ -68,7 +55,7 @@ export class MuleXmlParser {
     });
   }
 
-  private static doParse(xmlContent: string): RawElement | null {
+  private static doParse(xmlContent: string): { root: RawElement | null; errors: string[] } {
     const parser = new SaxesParser();
     const stack: ElementFrame[] = [];
     const nsStack: Record<string, string>[] = [
@@ -83,6 +70,11 @@ export class MuleXmlParser {
     let pendingStartCol = 0;
     let pendingNameStartCol = 0;
     let pendingNameEndCol = 0;
+    const errors: string[] = [];
+
+    parser.on('error', (err) => {
+      errors.push(err.message);
+    });
 
     parser.on('opentagstart', (tag) => {
       // Line is 1-based, column is 1-based at the end of the tag name
@@ -154,6 +146,13 @@ export class MuleXmlParser {
       }
     });
 
+    parser.on('cdata', (cdata) => {
+      if (stack.length > 0) {
+        const top = stack[stack.length - 1];
+        top.text = (top.text || '') + cdata;
+      }
+    });
+
     parser.on('closetag', () => {
       if (stack.length === 0) {
         return;
@@ -187,6 +186,6 @@ export class MuleXmlParser {
     parser.write(xmlContent);
     parser.close();
 
-    return rootElement;
+    return { root: rootElement, errors };
   }
 }

@@ -22,8 +22,12 @@ export declare class FlowVisualizerPanel {
     private handleUpdateConfigRef;
     private static escapeXml;
     private handleUpdateParameterValue;
+    private handleTransformScriptUpdate;
     private handleTestConnection;
     private findNodeInModel;
+    private parseObjectKeys;
+    private extractDataWeaveShape;
+    private computeStaticAutocompleteContext;
     private revealXmlRange;
     private syncEditorCursorToWebview;
     private handleFlowRefNavigation;

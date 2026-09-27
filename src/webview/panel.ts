@@ -177,7 +177,9 @@ export class FlowVisualizerPanel {
       if (error) {
         this.postMessage({
           type: 'showWarning',
-          message: `XML Parse Notice: ${error}. Showing last valid layout.`,
+          message: root
+            ? `XML Syntax Notice: ${error}`
+            : `XML Parse Notice: ${error}. Showing last valid layout.`,
         });
       }
 
@@ -305,6 +307,91 @@ export class FlowVisualizerPanel {
     attributes: Record<string, string>;
     isConfiguration?: boolean;
   }): Promise<void> {
+    // Compute static-only autocomplete context (variables declared earlier, preceding transform output shape)
+    let autocompleteContext: {
+      variables: Array<{ name: string; type?: string }>;
+      precedingPayloadShape?: { outputType?: string; fields: Array<{ name: string; children?: string[] }> };
+    } = { variables: [] };
+
+    if (this.currentDocUri && this.lastModel) {
+      try {
+        const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+        autocompleteContext = this.computeStaticAutocompleteContext(this.lastModel, msg.nodeId, curDoc.getText());
+      } catch (err) {
+        console.warn('Failed to compute static autocomplete context:', err);
+      }
+    }
+
+    // 0. Check if the clicked node is a Transform Message (ee:transform or dw:transform-message)
+    const isTransform =
+      (msg.localName === 'transform' && (msg.namespaceUri === 'http://www.mulesoft.org/schema/mule/ee/core' || msg.namespaceUri?.includes('ee') || !msg.namespaceUri)) ||
+      msg.localName === 'transform-message';
+
+    if (isTransform) {
+      let payloadScript = '%dw 2.0\noutput application/json\n---\n{\n}';
+      const targetVariables: Array<{ name: string; script: string }> = [];
+      let outputType = 'application/json';
+
+      if (this.currentDocUri && this.lastModel) {
+        const node = this.findNodeInModel(this.lastModel, msg.nodeId);
+        if (node) {
+          const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+          const nodeStartPos = new vscode.Position(node.range.startLine, node.range.startCol);
+          const nodeEndPos = new vscode.Position(node.range.endLine, node.range.endCol);
+          const nodeText = curDoc.getText(new vscode.Range(nodeStartPos, nodeEndPos));
+
+          // 1. Extract payload script
+          const payloadMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/);
+          if (payloadMatch) {
+            const rawInner = payloadMatch[2];
+            const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+            payloadScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
+          } else {
+            const cdataMatch = nodeText.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+            if (cdataMatch) {
+              payloadScript = cdataMatch[1];
+            }
+          }
+
+          // 2. Extract target variables
+          const varRegex = /<([a-zA-Z0-9_-]+:)?set-variable\b([^>]*)>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-variable>/g;
+          let vMatch: RegExpExecArray | null;
+          while ((vMatch = varRegex.exec(nodeText)) !== null) {
+            const attrStr = vMatch[2];
+            const nameMatch = attrStr.match(/variableName="([^"]+)"/) || attrStr.match(/name="([^"]+)"/);
+            const varName = nameMatch ? nameMatch[1] : 'variable';
+            const rawInner = vMatch[3];
+            const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+            const varScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
+            targetVariables.push({ name: varName, script: varScript });
+          }
+
+          // 3. Extract outputType from payloadScript
+          const outMatch = payloadScript.match(/output\s+([a-zA-Z0-9_\-\/]+)/);
+          if (outMatch) {
+            outputType = outMatch[1];
+          }
+        }
+      }
+
+      this.postMessage({
+        type: 'updatePropertiesPanel',
+        nodeId: msg.nodeId,
+        displayName: 'Transform Message',
+        iconId: 'core:transform',
+        groups: [],
+        currentValues: msg.attributes,
+        isTransform: true,
+        transformData: {
+          script: payloadScript,
+          targetVariables,
+          outputType,
+        },
+        autocompleteContext,
+      });
+      return;
+    }
+
     // 1. Check if the clicked node is itself a Configuration element
     const isConfig =
       msg.isConfiguration ||
@@ -408,6 +495,7 @@ export class FlowVisualizerPanel {
           testConnectionAvailable: canTest,
           namespaceUri: msg.namespaceUri,
           localName: msg.localName,
+          autocompleteContext,
         });
         return;
       } else {
@@ -446,6 +534,7 @@ export class FlowVisualizerPanel {
           testConnectionAvailable: canTest,
           namespaceUri: msg.namespaceUri,
           localName: msg.localName,
+          autocompleteContext,
         });
         return;
       }
@@ -538,6 +627,7 @@ export class FlowVisualizerPanel {
       iconId,
       groups,
       currentValues: msg.attributes,
+      autocompleteContext,
     });
   }
 
@@ -685,6 +775,12 @@ export class FlowVisualizerPanel {
     if (!this.currentDocUri || !this.lastModel) return;
     const node = this.findNodeInModel(this.lastModel, msg.nodeId);
     if (!node) return;
+
+    // Handle Transform Message script write-back (replacing CDATA/child element content)
+    if (msg.paramName === '__transform_payload__' || msg.paramName.startsWith('__transform_var:')) {
+      await this.handleTransformScriptUpdate(node, msg.paramName, String(msg.value));
+      return;
+    }
 
     // Check if the parameter belongs to a child element (e.g. child connection element in config)
     let targetNode: Node = node;
@@ -899,6 +995,135 @@ export class FlowVisualizerPanel {
     }
   }
 
+  private async handleTransformScriptUpdate(
+    node: Node,
+    paramName: string,
+    newScript: string
+  ): Promise<void> {
+    if (!this.currentDocUri) return;
+    const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+    const nodeStartPos = new vscode.Position(node.range.startLine, node.range.startCol);
+    const nodeEndPos = new vscode.Position(node.range.endLine, node.range.endCol);
+    const nodeRange = new vscode.Range(nodeStartPos, nodeEndPos);
+    const nodeText = curDoc.getText(nodeRange);
+
+    const workspaceEdit = new vscode.WorkspaceEdit();
+
+    if (paramName === '__transform_payload__') {
+      const setPayloadRegex = /<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/;
+      const match = nodeText.match(setPayloadRegex);
+
+      if (match && match.index !== undefined) {
+        const fullInner = match[2];
+        const innerOffset = match.index + match[0].indexOf(fullInner);
+        const cdataMatch = fullInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+
+        if (cdataMatch && cdataMatch.index !== undefined) {
+          const cdataStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset + cdataMatch.index + 9;
+          const cdataEndOffset = cdataStartOffset + cdataMatch[1].length;
+          const replaceRange = new vscode.Range(
+            curDoc.positionAt(cdataStartOffset),
+            curDoc.positionAt(cdataEndOffset)
+          );
+          workspaceEdit.replace(this.currentDocUri, replaceRange, newScript);
+        } else {
+          const innerStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset;
+          const innerEndOffset = innerStartOffset + fullInner.length;
+          const replaceRange = new vscode.Range(
+            curDoc.positionAt(innerStartOffset),
+            curDoc.positionAt(innerEndOffset)
+          );
+          workspaceEdit.replace(this.currentDocUri, replaceRange, `<![CDATA[${newScript}]]>`);
+        }
+      } else {
+        const messageRegex = /<([a-zA-Z0-9_-]+:)?message\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?message>/;
+        const msgMatch = nodeText.match(messageRegex);
+        const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
+
+        if (msgMatch && msgMatch.index !== undefined) {
+          const insertOffset = curDoc.offsetAt(nodeStartPos) + msgMatch.index + msgMatch[0].indexOf(msgMatch[2]);
+          const insertPos = curDoc.positionAt(insertOffset);
+          workspaceEdit.insert(
+            this.currentDocUri,
+            insertPos,
+            `\n\t\t<${prefix}:set-payload><![CDATA[${newScript}]]></${prefix}:set-payload>`
+          );
+        } else {
+          const openTagMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?transform\b[^>]*>/);
+          if (openTagMatch && openTagMatch.index !== undefined) {
+            const insertOffset = curDoc.offsetAt(nodeStartPos) + openTagMatch.index + openTagMatch[0].length;
+            const insertPos = curDoc.positionAt(insertOffset);
+            workspaceEdit.insert(
+              this.currentDocUri,
+              insertPos,
+              `\n\t<${prefix}:message>\n\t\t<${prefix}:set-payload><![CDATA[${newScript}]]></${prefix}:set-payload>\n\t</${prefix}:message>`
+            );
+          }
+        }
+      }
+    } else if (paramName.startsWith('__transform_var:')) {
+      const varName = paramName.slice('__transform_var:'.length);
+      const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
+      const varRegex = new RegExp(
+        `<([a-zA-Z0-9_-]+:)?set-variable\\b[^>]*variableName="${varName}"[^>]*>([\\s\\S]*?)<\\/([a-zA-Z0-9_-]+:)?set-variable>`
+      );
+      const match = nodeText.match(varRegex);
+
+      if (match && match.index !== undefined) {
+        const fullInner = match[2];
+        const innerOffset = match.index + match[0].indexOf(fullInner);
+        const cdataMatch = fullInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+
+        if (cdataMatch && cdataMatch.index !== undefined) {
+          const cdataStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset + cdataMatch.index + 9;
+          const cdataEndOffset = cdataStartOffset + cdataMatch[1].length;
+          const replaceRange = new vscode.Range(
+            curDoc.positionAt(cdataStartOffset),
+            curDoc.positionAt(cdataEndOffset)
+          );
+          workspaceEdit.replace(this.currentDocUri, replaceRange, newScript);
+        } else {
+          const innerStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset;
+          const innerEndOffset = innerStartOffset + fullInner.length;
+          const replaceRange = new vscode.Range(
+            curDoc.positionAt(innerStartOffset),
+            curDoc.positionAt(innerEndOffset)
+          );
+          workspaceEdit.replace(this.currentDocUri, replaceRange, `<![CDATA[${newScript}]]>`);
+        }
+      } else {
+        const varsRegex = /<([a-zA-Z0-9_-]+:)?variables\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?variables>/;
+        const varsMatch = nodeText.match(varsRegex);
+
+        if (varsMatch && varsMatch.index !== undefined) {
+          const insertOffset = curDoc.offsetAt(nodeStartPos) + varsMatch.index + varsMatch[0].indexOf(varsMatch[2]);
+          const insertPos = curDoc.positionAt(insertOffset);
+          workspaceEdit.insert(
+            this.currentDocUri,
+            insertPos,
+            `\n\t\t<${prefix}:set-variable variableName="${varName}"><![CDATA[${newScript}]]></${prefix}:set-variable>`
+          );
+        } else {
+          const closeTagMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?transform>/);
+          if (closeTagMatch && closeTagMatch.index !== undefined) {
+            const insertOffset = curDoc.offsetAt(nodeStartPos) + closeTagMatch.index;
+            const insertPos = curDoc.positionAt(insertOffset);
+            workspaceEdit.insert(
+              this.currentDocUri,
+              insertPos,
+              `\t<${prefix}:variables>\n\t\t<${prefix}:set-variable variableName="${varName}"><![CDATA[${newScript}]]></${prefix}:set-variable>\n\t</${prefix}:variables>\n`
+            );
+          }
+        }
+      }
+    }
+
+    const applied = await vscode.workspace.applyEdit(workspaceEdit);
+    if (applied) {
+      await curDoc.save();
+    }
+  }
+
   private async handleTestConnection(msg: {
     nodeId: string;
     namespaceUri: string;
@@ -961,6 +1186,247 @@ export class FlowVisualizerPanel {
     }
 
     return null;
+  }
+
+  private parseObjectKeys(objContent: string): Array<{ name: string; children?: string[] }> {
+    const keys: Array<{ name: string; children?: string[] }> = [];
+    let depth = 0;
+    let inString = false;
+    let stringChar = '';
+
+    let i = 0;
+    while (i < objContent.length) {
+      const ch = objContent[i];
+
+      if (inString) {
+        if (ch === '\\') {
+          i += 2;
+          continue;
+        }
+        if (ch === stringChar) {
+          inString = false;
+        }
+        i++;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        stringChar = ch;
+        i++;
+        continue;
+      }
+
+      if (ch === '{' || ch === '[' || ch === '(') {
+        depth++;
+        i++;
+        continue;
+      }
+      if (ch === '}' || ch === ']' || ch === ')') {
+        depth--;
+        i++;
+        continue;
+      }
+
+      if (depth === 0) {
+        if (ch === ':') {
+          const textBefore = objContent.slice(0, i);
+          const match = textBefore.match(/(?:^|[,{\n\r])\s*(?:([a-zA-Z0-9_\-]+)|["']([^"']+)["'])\s*$/);
+          if (match) {
+            const keyName = match[1] || match[2];
+            if (keyName && !keys.some((k) => k.name === keyName)) {
+              let childKeys: string[] = [];
+              const afterColon = objContent.slice(i + 1).trimStart();
+              if (afterColon.startsWith('{')) {
+                let subDepth = 0;
+                let endSub = -1;
+                for (let j = 0; j < afterColon.length; j++) {
+                  if (afterColon[j] === '{') subDepth++;
+                  else if (afterColon[j] === '}') {
+                    subDepth--;
+                    if (subDepth === 0) {
+                      endSub = j;
+                      break;
+                    }
+                  }
+                }
+                if (endSub > 0) {
+                  const subContent = afterColon.slice(1, endSub);
+                  childKeys = this.parseObjectKeys(subContent).map((k) => k.name);
+                }
+              }
+              keys.push({ name: keyName, children: childKeys });
+            }
+          }
+        }
+      }
+
+      i++;
+    }
+
+    return keys;
+  }
+
+  private extractDataWeaveShape(script: string): { outputType?: string; fields: Array<{ name: string; children?: string[] }> } | undefined {
+    if (!script) return undefined;
+
+    const outMatch = script.match(/output\s+([a-zA-Z0-9_\-\/]+)/);
+    const outputType = outMatch ? outMatch[1] : undefined;
+
+    const separatorIndex = script.indexOf('---');
+    let body = separatorIndex >= 0 ? script.slice(separatorIndex + 3).trim() : script.trim();
+    body = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    let fields: Array<{ name: string; children?: string[] }> = [];
+    const xmlRootMatch = body.match(/^([a-zA-Z0-9_-]+)\s*:\s*\{([\s\S]*)\}\s*$/);
+    if (xmlRootMatch) {
+      const rootPrefix = xmlRootMatch[1];
+      const topKeys = this.parseObjectKeys(xmlRootMatch[2]);
+      fields.push({
+        name: rootPrefix,
+        children: topKeys.map((k) => k.name),
+      });
+    } else {
+      const firstBrace = body.indexOf('{');
+      const lastBrace = body.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        fields = this.parseObjectKeys(body.slice(firstBrace + 1, lastBrace));
+      }
+    }
+
+    if (fields.length > 0 || outputType) {
+      return { outputType, fields };
+    }
+    return undefined;
+  }
+
+  private computeStaticAutocompleteContext(
+    model: SemanticModel,
+    targetNodeId: string,
+    docText: string
+  ): {
+    variables: Array<{ name: string; type?: string }>;
+    precedingPayloadShape?: { outputType?: string; fields: Array<{ name: string; children?: string[] }> };
+  } {
+    const nodesBefore: Node[] = [];
+    let found = false;
+
+    const traverseNode = (node: Node): boolean => {
+      if (node.id === targetNodeId) {
+        found = true;
+        return true;
+      }
+      nodesBefore.push(node);
+
+      if (node.chain && node.chain.length > 0) {
+        for (const child of node.chain) {
+          if (traverseNode(child)) return true;
+        }
+      }
+      if (node.routes && node.routes.length > 0) {
+        for (const route of node.routes) {
+          if (route.chain) {
+            for (const child of route.chain) {
+              if (traverseNode(child)) return true;
+            }
+          }
+        }
+      }
+      return false;
+    };
+
+    for (const flow of model.flows) {
+      nodesBefore.length = 0;
+      found = false;
+
+      if (flow.source && traverseNode(flow.source)) {
+        break;
+      }
+      if (flow.chain) {
+        for (const node of flow.chain) {
+          if (traverseNode(node)) break;
+        }
+        if (found) break;
+      }
+      if (flow.errorHandler) {
+        for (const route of flow.errorHandler) {
+          if (route.chain) {
+            for (const child of route.chain) {
+              if (traverseNode(child)) break;
+            }
+            if (found) break;
+          }
+        }
+        if (found) break;
+      }
+    }
+
+    if (!found) {
+      return { variables: [] };
+    }
+
+    // 1. Variables declared earlier in this flow
+    const variables: Array<{ name: string; type?: string }> = [];
+    const seenVarNames = new Set<string>();
+
+    for (const n of nodesBefore) {
+      if (n.descriptor && (n.descriptor.localName === 'set-variable' || n.descriptor.localName.includes('set-variable'))) {
+        const varName = n.attributes['variableName'] || n.attributes['name'];
+        if (varName && !seenVarNames.has(varName)) {
+          seenVarNames.add(varName);
+          const type = n.attributes['mimeType'] || n.attributes['dataType'];
+          variables.push({ name: varName, type });
+        }
+      }
+
+      if (n.descriptor && (n.descriptor.localName === 'transform' || n.descriptor.localName === 'transform-message')) {
+        try {
+          const lines = docText.split('\n');
+          const nodeSlice = lines.slice(n.range.startLine, n.range.endLine + 1).join('\n');
+          const vRegex = /<([a-zA-Z0-9_-]+:)?set-variable\b([^>]*)>/g;
+          let vm: RegExpExecArray | null;
+          while ((vm = vRegex.exec(nodeSlice)) !== null) {
+            const attrStr = vm[2];
+            const nm = attrStr.match(/variableName="([^"]+)"/) || attrStr.match(/name="([^"]+)"/);
+            if (nm && nm[1] && !seenVarNames.has(nm[1])) {
+              seenVarNames.add(nm[1]);
+              variables.push({ name: nm[1] });
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Preceding component payload shape (ONLY if immediately preceding component in same chain is a Transform Message)
+    let precedingPayloadShape: { outputType?: string; fields: Array<{ name: string; children?: string[] }> } | undefined;
+    const prevNode = nodesBefore.length > 0 ? nodesBefore[nodesBefore.length - 1] : undefined;
+    if (prevNode && prevNode.descriptor && (prevNode.descriptor.localName === 'transform' || prevNode.descriptor.localName === 'transform-message')) {
+      try {
+        const lines = docText.split('\n');
+        const prevSlice = lines.slice(prevNode.range.startLine, prevNode.range.endLine + 1).join('\n');
+        let payloadScript = '';
+        const payloadMatch = prevSlice.match(/<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/);
+        if (payloadMatch) {
+          const rawInner = payloadMatch[2];
+          const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+          payloadScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
+        } else {
+          const cdataMatch = prevSlice.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+          if (cdataMatch) {
+            payloadScript = cdataMatch[1];
+          }
+        }
+
+        if (payloadScript) {
+          precedingPayloadShape = this.extractDataWeaveShape(payloadScript);
+        }
+      } catch {}
+    }
+
+    return {
+      variables,
+      precedingPayloadShape,
+    };
   }
 
   private async revealXmlRange(range: SourceRange, focusEditor?: boolean): Promise<void> {

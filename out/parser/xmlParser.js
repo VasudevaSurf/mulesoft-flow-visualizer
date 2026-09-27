@@ -12,28 +12,15 @@ class MuleXmlParser {
             return { root: null, error: null };
         }
         try {
-            const root = this.doParse(xmlContent);
+            const cleanXml = this.sanitizeAttributes(xmlContent);
+            const { root, errors } = this.doParse(cleanXml);
             if (root) {
                 this.lastGoodResult = root;
                 return { root, error: null };
             }
-            return { root: this.lastGoodResult, error: 'Empty XML document' };
+            return { root: this.lastGoodResult, error: errors.length > 0 ? errors[0] : 'Empty XML document' };
         }
         catch (e) {
-            // Auto-recover if error was caused by unescaped '<' inside DataWeave expressions in attributes (e.g. #[a <= b])
-            try {
-                const sanitized = this.sanitizeAttributes(xmlContent);
-                if (sanitized !== xmlContent) {
-                    const root = this.doParse(sanitized);
-                    if (root) {
-                        this.lastGoodResult = root;
-                        return { root, error: null };
-                    }
-                }
-            }
-            catch {
-                // Ignore fallback error and report original
-            }
             const errorMessage = e?.message || String(e);
             return {
                 root: this.lastGoodResult,
@@ -67,6 +54,10 @@ class MuleXmlParser {
         let pendingStartCol = 0;
         let pendingNameStartCol = 0;
         let pendingNameEndCol = 0;
+        const errors = [];
+        parser.on('error', (err) => {
+            errors.push(err.message);
+        });
         parser.on('opentagstart', (tag) => {
             // Line is 1-based, column is 1-based at the end of the tag name
             const line = parser.line - 1;
@@ -128,6 +119,12 @@ class MuleXmlParser {
                 top.text = (top.text || '') + text.trim();
             }
         });
+        parser.on('cdata', (cdata) => {
+            if (stack.length > 0) {
+                const top = stack[stack.length - 1];
+                top.text = (top.text || '') + cdata;
+            }
+        });
         parser.on('closetag', () => {
             if (stack.length === 0) {
                 return;
@@ -156,7 +153,7 @@ class MuleXmlParser {
         });
         parser.write(xmlContent);
         parser.close();
-        return rootElement;
+        return { root: rootElement, errors };
     }
 }
 exports.MuleXmlParser = MuleXmlParser;
