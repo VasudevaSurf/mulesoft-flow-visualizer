@@ -17,6 +17,13 @@ export declare class FlowVisualizerPanel {
     private triggerUpdateDebounced;
     updateView(): Promise<void>;
     private handleWebviewMessage;
+    private handleShowProperties;
+    private handleCreateConfiguration;
+    private handleUpdateConfigRef;
+    private static escapeXml;
+    private handleUpdateParameterValue;
+    private handleTestConnection;
+    private findNodeInModel;
     private revealXmlRange;
     private syncEditorCursorToWebview;
     private handleFlowRefNavigation;

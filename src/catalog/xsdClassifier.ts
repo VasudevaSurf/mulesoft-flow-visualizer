@@ -7,6 +7,54 @@ export interface XsdParseResult {
   descriptors: ComponentDescriptor[];
 }
 
+/**
+ * Determines if an element is a message source based on XSD substitutionGroup or naming patterns.
+ */
+export function isLikelySourceElement(name: string, substitutionGroup: string = ''): boolean {
+  const lowerName = name.toLowerCase();
+  const subLower = substitutionGroup.toLowerCase();
+
+  // 1. Official Mule XSD substitution groups
+  if (
+    subLower.includes('message-source') ||
+    subLower.includes('abstract-message-source') ||
+    subLower.includes('abstractmessagesource') ||
+    subLower.includes('inbound-endpoint') ||
+    subLower.includes('abstract-inbound-endpoint')
+  ) {
+    return true;
+  }
+
+  // 2. Comprehensive source naming patterns across Mule connectors (HTTP, JMS, MQ, SAP, Kafka, Salesforce, etc.)
+  if (
+    lowerName.includes('listener') ||
+    lowerName.includes('subscriber') ||
+    lowerName.includes('subscribe') ||
+    lowerName.includes('consumer') ||
+    lowerName.includes('scheduler') ||
+    lowerName.includes('trigger') ||
+    lowerName.includes('inbound-endpoint') ||
+    lowerName === 'poll' ||
+    lowerName.startsWith('poll-') ||
+    lowerName.endsWith('-poll') ||
+    lowerName.startsWith('on-new') ||
+    lowerName.startsWith('on-modified') ||
+    lowerName.startsWith('on-deleted') ||
+    lowerName.startsWith('on-updated') ||
+    lowerName.startsWith('on-created') ||
+    lowerName.startsWith('on-table-row') ||
+    lowerName.startsWith('on-row') ||
+    lowerName.startsWith('on-message') ||
+    lowerName === 'idoc-listener' ||
+    lowerName.endsWith('-idoc-listener') ||
+    lowerName.includes('idoc')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export class XsdClassifier {
   private static parser = new XMLParser({
     ignoreAttributes: false,
@@ -60,8 +108,8 @@ export class XsdClassifier {
           descriptor.routeElementNames = ['route', 'when', 'otherwise', 'step'];
         }
 
-        if (name.includes('listener')) {
-          descriptor.subtitleAttribute = 'path';
+        if (kind === 'source') {
+          descriptor.subtitleAttribute = name.includes('listener') && (name.includes('http') || !name.includes(':')) ? 'path' : 'config-ref';
         } else if (name.includes('request') || name.includes('send')) {
           descriptor.subtitleAttribute = 'url';
         } else {
@@ -100,13 +148,7 @@ export class XsdClassifier {
     }
 
     // Source elements
-    if (
-      substitutionGroup.includes('message-source') ||
-      substitutionGroup.includes('abstract-message-source') ||
-      lowerName.endsWith('listener') ||
-      lowerName.endsWith('-listener') ||
-      lowerName.startsWith('listener')
-    ) {
+    if (isLikelySourceElement(name, substitutionGroup)) {
       return 'source';
     }
 

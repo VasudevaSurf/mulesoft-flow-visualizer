@@ -43,15 +43,38 @@ const xsdClassifier_1 = require("./xsdClassifier");
 const iconStore_1 = require("./iconStore");
 class JarReader {
     /**
-     * Reads a mule-plugin jar file and extracts its XSD descriptors, icon, and artifact metadata.
+     * Opens and loads a JAR file using JSZip.
      */
-    static async readJar(jarPath, groupId, artifactId, version) {
+    static async openJar(jarPath) {
         if (!fs.existsSync(jarPath)) {
             return null;
         }
         try {
+            this.jarReadCount++;
+            console.log(`[JarReader] Actual jar file read #${this.jarReadCount}: ${jarPath}`);
             const buffer = fs.readFileSync(jarPath);
-            const zip = await jszip_1.default.loadAsync(buffer);
+            return await jszip_1.default.loadAsync(buffer);
+        }
+        catch (e) {
+            console.error(`Failed to open jar ${jarPath}:`, e);
+            return null;
+        }
+    }
+    static getJarReadCount() {
+        return this.jarReadCount;
+    }
+    static resetJarReadCount() {
+        this.jarReadCount = 0;
+    }
+    /**
+     * Reads a mule-plugin jar file and extracts its XSD descriptors, icon, and artifact metadata.
+     */
+    static async readJar(jarPath, groupId, artifactId, version, zipOrPath) {
+        const zip = zipOrPath || (await JarReader.openJar(jarPath));
+        if (!zip) {
+            return null;
+        }
+        try {
             const iconId = `${groupId}:${artifactId}`;
             // 1. Read mule-artifact.json if present
             let extensionDisplayName = artifactId;
@@ -103,6 +126,26 @@ class JarReader {
             if (!foundIcon) {
                 // We will fallback to core:generic-operation icon at render time if needed
             }
+            // 2b. Check for Mule SDK extension-model.json (defines @Source vs @Operation explicitly)
+            const extModelFiles = zip.file(/extension-model.*\.json$/i);
+            const sdkSourceNames = new Set();
+            for (const emf of extModelFiles) {
+                try {
+                    const jsonStr = await emf.async('string');
+                    const parsed = JSON.parse(jsonStr);
+                    const sources = parsed.sources || (parsed.extension && parsed.extension.sources);
+                    if (Array.isArray(sources)) {
+                        for (const s of sources) {
+                            if (s && s.name) {
+                                sdkSourceNames.add(s.name.toLowerCase());
+                            }
+                        }
+                    }
+                }
+                catch {
+                    // Ignore json parse error
+                }
+            }
             // 3. Find and parse XSD files in META-INF/
             const xsdFiles = zip.file(/META-INF\/.*\.xsd$/i);
             const allDescriptors = [];
@@ -118,6 +161,12 @@ class JarReader {
                 }
                 catch (e) {
                     console.warn(`Failed parsing XSD ${xsdZipEntry.name} in ${jarPath}:`, e);
+                }
+            }
+            // Apply SDK model source annotations
+            for (const desc of allDescriptors) {
+                if (sdkSourceNames.has(desc.localName.toLowerCase())) {
+                    desc.kind = 'source';
                 }
             }
             return {
@@ -137,4 +186,5 @@ class JarReader {
     }
 }
 exports.JarReader = JarReader;
+JarReader.jarReadCount = 0;
 //# sourceMappingURL=jarReader.js.map

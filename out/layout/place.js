@@ -37,8 +37,8 @@ class PlaceEngine {
         };
         let sourceBox = null;
         let positionedSource = null;
-        const isFullFlow = mFlow.flow.type === 'flow';
-        const sourceW = isFullFlow ? constants_1.L.sourceCompartmentW + constants_1.L.sourceDividerW : 0;
+        const hasSource = mFlow.flow.type === 'flow' && !!mFlow.sourceMeasured;
+        const sourceW = hasSource ? constants_1.L.sourceCompartmentW + constants_1.L.sourceDividerW : 0;
         const bodyY = flowY + constants_1.L.flowHeaderH + constants_1.L.flowPad.top;
         const bodyH = Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? constants_1.L.tile.h : 0, constants_1.L.laneMinH);
         const processX = flowX + constants_1.L.flowPad.left + sourceW;
@@ -49,18 +49,16 @@ class PlaceEngine {
             height: bodyH,
         };
         const processLaneY = bodyY + mFlow.processChain.laneY;
-        if (isFullFlow) {
+        if (hasSource && mFlow.sourceMeasured) {
             sourceBox = {
                 x: flowX + constants_1.L.flowPad.left,
                 y: bodyY,
                 width: constants_1.L.sourceCompartmentW,
                 height: bodyH,
             };
-            if (mFlow.sourceMeasured) {
-                const srcX = sourceBox.x + (constants_1.L.sourceCompartmentW - mFlow.sourceMeasured.w) / 2;
-                const srcY = processLaneY - mFlow.sourceMeasured.laneY;
-                positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
-            }
+            const srcX = sourceBox.x + (constants_1.L.sourceCompartmentW - mFlow.sourceMeasured.w) / 2;
+            const srcY = processLaneY - mFlow.sourceMeasured.laneY;
+            positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
         }
         // Place process chain
         const positionedChain = this.placeChain(mFlow.processChain, processX, processLaneY);

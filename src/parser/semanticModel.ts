@@ -1,5 +1,6 @@
 import { RawElement, SemanticModel, FlowModel, Node, Route, ComponentDescriptor } from './types';
 import { ExtensionCatalog } from '../catalog';
+import { isLikelySourceElement } from '../catalog/xsdClassifier';
 import { generateNodeId } from './nodeId';
 
 export class SemanticModelBuilder {
@@ -41,6 +42,76 @@ export class SemanticModelBuilder {
     };
   }
 
+  private static isKnownProcessor(localName: string, prefix?: string | null): boolean {
+    const pfx = (prefix || '').toLowerCase();
+    const local = localName.toLowerCase();
+
+    // Built-in core message processors / routers / scopes
+    const coreNames = new Set([
+      'logger', 'set-payload', 'set-variable', 'remove-variable',
+      'transform', 'choice', 'scatter-gather', 'round-robin',
+      'first-successful', 'flow-ref', 'async', 'try', 'until-successful',
+      'foreach', 'parallel-foreach', 'batch:job', 'batch:execute',
+      'raise-error', 'error-handler', 'on-error-propagate', 'on-error-continue',
+      'parse-template', 'load-static-resource', 'idempotent-message-validator'
+    ]);
+
+    if (coreNames.has(local) || coreNames.has(`${pfx}:${local}`)) {
+      return true;
+    }
+
+    if (pfx === 'ee' && local === 'transform') {
+      return true;
+    }
+
+    // Common outbound operations that should never be treated as a source
+    if (
+      local.startsWith('request') ||
+      local.endsWith('-request') ||
+      local === 'request' ||
+      local === 'select' ||
+      local === 'insert' ||
+      local === 'update' ||
+      local === 'delete' ||
+      local === 'publish' ||
+      local === 'publish-consume' ||
+      local === 'send' ||
+      (local === 'consume' && pfx === 'wsc')
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private static isMessageSource(element: RawElement, descriptor: ComponentDescriptor): boolean {
+    // 1. Explicitly classified as source by catalog or XSD/SDK model
+    if (descriptor.kind === 'source') {
+      return true;
+    }
+
+    // 2. Known source naming patterns (listener, subscriber, scheduler, trigger, on-new-*, poll, etc.)
+    if (isLikelySourceElement(element.localName)) {
+      return true;
+    }
+
+    // 3. Known processors, routers, scopes, configs, or outbound operations cannot be sources
+    if (this.isKnownProcessor(element.localName, element.prefix)) {
+      return false;
+    }
+
+    if (descriptor.kind === 'router' || descriptor.kind === 'scope' || descriptor.kind === 'global-config') {
+      return false;
+    }
+
+    if (element.localName === 'error-handler') {
+      return false;
+    }
+
+    // 4. Default: per Mule specification, the first child of <flow> is an inbound message source
+    return true;
+  }
+
   private static buildFlow(
     flowEl: RawElement,
     type: 'flow' | 'sub-flow',
@@ -62,8 +133,12 @@ export class SemanticModelBuilder {
       const firstChild = children[0];
       const descriptor = ExtensionCatalog.resolveComponent(firstChild.namespaceUri, firstChild.localName, firstChild.prefix);
 
-      if (descriptor.kind === 'source' || firstChild.localName.includes('listener')) {
+      if (this.isMessageSource(firstChild, descriptor)) {
         sourceNode = this.buildNode(firstChild, flowName, 'source', unresolvedNs);
+        sourceNode.descriptor.kind = 'source';
+        if (sourceNode.descriptor.iconId === 'core:unknown') {
+          sourceNode.descriptor.iconId = 'core:generic-source';
+        }
         childIndex = 1;
       }
     }

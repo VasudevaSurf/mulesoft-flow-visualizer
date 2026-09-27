@@ -1,15 +1,24 @@
+import * as vscode from 'vscode';
 import { ComponentDescriptor } from '../parser/types';
 import { CORE_CATALOG } from './coreCatalog';
 import { MavenRepo } from '../workspace/mavenRepo';
 import { PomParser, MavenDependency } from '../workspace/pomParser';
 import { JarReader } from './jarReader';
 import { CatalogCache } from './catalogCache';
-import { XsdClassifier } from './xsdClassifier';
+import { XsdClassifier, isLikelySourceElement } from './xsdClassifier';
 import { IconStore } from './iconStore';
+import {
+  ExtensionModelReader,
+  ExtensionModel,
+  OperationModel,
+  SourceModel,
+  ConfigurationModel,
+} from './extensionModelReader';
 
 export class ExtensionCatalog {
   private static dynamicDescriptors = new Map<string, ComponentDescriptor>(); // namespaceUri + ':' + localName -> descriptor
   private static prefixToIconId = new Map<string, string>(); // prefix -> iconId
+  private static extensionModels = new Map<string, ExtensionModel>(); // namespaceUri or prefix or artifactId -> ExtensionModel
   private static cache: CatalogCache | null = null;
   private static loadedPomPaths = new Set<string>();
 
@@ -17,6 +26,21 @@ export class ExtensionCatalog {
     if (!this.cache) {
       this.cache = new CatalogCache(storageDir);
     }
+  }
+
+  public static getCache(): CatalogCache {
+    if (!this.cache) {
+      this.cache = new CatalogCache();
+    }
+    return this.cache;
+  }
+
+  private static registerExtensionModel(artifactId: string, extModel: ExtensionModel): void {
+    if (extModel.namespaceUri) this.extensionModels.set(extModel.namespaceUri.toLowerCase(), extModel);
+    if (extModel.prefix) this.extensionModels.set(extModel.prefix.toLowerCase(), extModel);
+    this.extensionModels.set(artifactId.toLowerCase(), extModel);
+    const shortArt = artifactId.toLowerCase().replace(/^mule-/, '').replace(/-connector$/, '').replace(/-module$/, '');
+    this.extensionModels.set(shortArt, extModel);
   }
 
   /**
@@ -71,6 +95,13 @@ export class ExtensionCatalog {
         'java': 'org.mule.modules:mule-java-module',
         'wsc': 'org.mule.connectors:mule-wsc-connector',
         'sockets': 'org.mule.connectors:mule-sockets-connector',
+        'jms': 'org.mule.connectors:mule-jms-connector',
+        'ibm-mq': 'com.mulesoft.connectors:mule-ibm-mq-connector',
+        'ibmmq': 'com.mulesoft.connectors:mule-ibm-mq-connector',
+        'anypoint-mq': 'com.mulesoft.connectors:anypoint-mq-connector',
+        'kafka': 'com.mulesoft.connectors:mule-kafka-connector',
+        'salesforce': 'com.mulesoft.connectors:mule-salesforce-connector',
+        'sap': 'com.mulesoft.connectors:mule-sap-connector',
       };
       const candidateIconId = knownConnectorMap[prefix.toLowerCase()];
       if (candidateIconId && IconStore.hasIcon(candidateIconId)) {
@@ -79,7 +110,7 @@ export class ExtensionCatalog {
     }
 
     const lowerName = localName.toLowerCase();
-    const isSource = lowerName.includes('listener') || lowerName.includes('scheduler');
+    const isSource = isLikelySourceElement(localName);
     const isConfig = lowerName.endsWith('-config') || lowerName.endsWith('config') || lowerName.includes('connection');
 
     return {
@@ -90,6 +121,245 @@ export class ExtensionCatalog {
       iconId: resolvedIconId || (isSource ? 'core:generic-source' : 'core:unknown'),
       subtitleAttribute: isSource ? 'path' : 'config-ref',
     };
+  }
+
+  /**
+   * Retrieves an OperationModel or SourceModel by namespace URI and local element name.
+   */
+  public static async getOperationOrSourceModel(
+    namespaceUri: string | null,
+    localName: string,
+    prefix?: string | null
+  ): Promise<OperationModel | SourceModel | null> {
+    const ns = (namespaceUri || '').toLowerCase();
+    const lowerLocal = localName.toLowerCase();
+
+    // Helper to find in a given ExtensionModel
+    const findInModel = (model: ExtensionModel): OperationModel | SourceModel | null => {
+      const op = model.operations.find(
+        (o) => (o.id || o.name || o.xmlTag || '').toLowerCase() === lowerLocal
+      );
+      if (op) return op;
+
+      const src = model.sources.find(
+        (s) => (s.id || s.name || s.xmlTag || '').toLowerCase() === lowerLocal
+      );
+      if (src) return src;
+
+      return null;
+    };
+
+    // 1. Search in cached extensionModels
+    for (const [key, model] of this.extensionModels.entries()) {
+      if (ns.includes(key) || key.includes(ns) || (prefix && key === prefix.toLowerCase())) {
+        const found = findInModel(model);
+        if (found) return found;
+      }
+    }
+
+    // 2. On-demand search from ~/.m2 repository
+    try {
+      const config = vscode.workspace.getConfiguration('muleFlow');
+      const customM2 = config.get<string>('mavenLocalRepository');
+      const mavenRepo = new MavenRepo(customM2);
+      const installed = mavenRepo.findInstalledMulePlugins();
+
+      // Extract short name from namespace or prefix (e.g. "http" or "db")
+      const candidateTokens = [prefix, ns.replace(/\/$/, '').split('/').pop()].filter(Boolean) as string[];
+
+      for (const item of installed) {
+        const art = item.dep.artifactId.toLowerCase();
+        const shortArt = art.replace(/^mule-/, '').replace(/-connector$/, '').replace(/-module$/, '');
+
+        const matches = candidateTokens.some(
+          (t) => t && (art.includes(t.toLowerCase()) || shortArt === t.toLowerCase())
+        );
+
+        if (matches) {
+          let extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          if (!extModel) {
+            await this.loadDependencyWithJar(item.dep, item.jarPath);
+            extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          }
+          if (extModel) {
+            const found = findInModel(extModel);
+            if (found) return found;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error during on-demand ExtensionModel resolution:', e);
+    }
+
+    return null;
+  }
+
+  /**
+   * Retrieves the matching ConfigurationModel and XML tag for a component (operation or source).
+   */
+  public static async getConfigurationModelForComponent(
+    namespaceUri: string | null,
+    localName: string,
+    prefix?: string | null
+  ): Promise<{ configModel: ConfigurationModel; configXmlTag: string; prefix: string } | null> {
+    const ns = (namespaceUri || '').toLowerCase();
+    const lowerLocal = localName.toLowerCase();
+
+    // Helper to find matching ConfigurationModel in a given ExtensionModel
+    const findConfigInModel = (
+      model: ExtensionModel
+    ): { configModel: ConfigurationModel; configXmlTag: string; prefix: string } | null => {
+      if (!model.configurations || model.configurations.length === 0) return null;
+
+      let matchedConfig: ConfigurationModel | null = null;
+      if (model.configurations.length === 1) {
+        matchedConfig = model.configurations[0];
+      } else {
+        matchedConfig =
+          model.configurations.find((c) => {
+            const cId = (c.id || c.name || '').toLowerCase();
+            return cId.includes(lowerLocal) || lowerLocal.includes(cId.replace(/config$/, ''));
+          }) || model.configurations[0];
+      }
+
+      const pfx = prefix || model.prefix || 'mule';
+      let cfgTag = matchedConfig.id || matchedConfig.name || 'config';
+      cfgTag = cfgTag.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+      if (!cfgTag.endsWith('config') && !cfgTag.endsWith('-config')) {
+        cfgTag = `${cfgTag}-config`;
+      }
+      const configXmlTag = `${pfx}:${cfgTag}`;
+
+      return {
+        configModel: matchedConfig,
+        configXmlTag,
+        prefix: pfx,
+      };
+    };
+
+    // 1. Search in cached extensionModels
+    for (const [key, model] of this.extensionModels.entries()) {
+      if (ns.includes(key) || key.includes(ns) || (prefix && key === prefix.toLowerCase())) {
+        const found = findConfigInModel(model);
+        if (found) return found;
+      }
+    }
+
+    // 2. On-demand search from ~/.m2 repository
+    try {
+      const config = vscode.workspace.getConfiguration('muleFlow');
+      const customM2 = config.get<string>('mavenLocalRepository');
+      const mavenRepo = new MavenRepo(customM2);
+      const installed = mavenRepo.findInstalledMulePlugins();
+
+      const candidateTokens = [prefix, ns.replace(/\/$/, '').split('/').pop()].filter(Boolean) as string[];
+
+      for (const item of installed) {
+        const art = item.dep.artifactId.toLowerCase();
+        const shortArt = art.replace(/^mule-/, '').replace(/-connector$/, '').replace(/-module$/, '');
+
+        const matches = candidateTokens.some(
+          (t) => t && (art.includes(t.toLowerCase()) || shortArt === t.toLowerCase())
+        );
+
+        if (matches) {
+          let extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          if (!extModel) {
+            await this.loadDependencyWithJar(item.dep, item.jarPath);
+            extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          }
+          if (extModel) {
+            const found = findConfigInModel(extModel);
+            if (found) return found;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error resolving ConfigurationModel:', e);
+    }
+
+    return null;
+  }
+
+  /**
+   * Retrieves a ConfigurationModel directly by its tag or configuration name (e.g. "listener-config", "request-config", "config").
+   */
+  public static async getConfigurationModel(
+    namespaceUri: string | null,
+    configLocalName: string,
+    prefix?: string | null
+  ): Promise<ConfigurationModel | null> {
+    const ns = (namespaceUri || '').toLowerCase();
+    const lowerLocal = configLocalName.toLowerCase();
+    const normalizedLocal = lowerLocal.replace(/[-_]/g, '');
+
+    const findConfigInModel = (model: ExtensionModel): ConfigurationModel | null => {
+      if (!model.configurations || model.configurations.length === 0) return null;
+
+      // 1. Direct match on id, name, or toKebabCase
+      for (const c of model.configurations) {
+        const cId = (c.id || c.name || '').toLowerCase();
+        const cNormalized = cId.replace(/[-_]/g, '');
+        const cKebab = cId.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
+        if (cId === lowerLocal || cNormalized === normalizedLocal || cKebab === lowerLocal) {
+          return c;
+        }
+        if (cNormalized.includes(normalizedLocal) || normalizedLocal.includes(cNormalized)) {
+          return c;
+        }
+      }
+
+      // 2. If single configuration in extension model, it's that one
+      if (model.configurations.length === 1) {
+        return model.configurations[0];
+      }
+
+      return null;
+    };
+
+    // 1. Check cached models
+    for (const [key, model] of this.extensionModels.entries()) {
+      if (ns.includes(key) || key.includes(ns) || (prefix && key === prefix.toLowerCase())) {
+        const found = findConfigInModel(model);
+        if (found) return found;
+      }
+    }
+
+    // 2. On-demand search from ~/.m2 repository
+    try {
+      const config = vscode.workspace.getConfiguration('muleFlow');
+      const customM2 = config.get<string>('mavenLocalRepository');
+      const mavenRepo = new MavenRepo(customM2);
+      const installed = mavenRepo.findInstalledMulePlugins();
+
+      const candidateTokens = [prefix, ns.replace(/\/$/, '').split('/').pop()].filter(Boolean) as string[];
+
+      for (const item of installed) {
+        const art = item.dep.artifactId.toLowerCase();
+        const shortArt = art.replace(/^mule-/, '').replace(/-connector$/, '').replace(/-module$/, '');
+
+        const matches = candidateTokens.some(
+          (t) => t && (art.includes(t.toLowerCase()) || shortArt === t.toLowerCase())
+        );
+
+        if (matches) {
+          let extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          if (!extModel) {
+            await this.loadDependencyWithJar(item.dep, item.jarPath);
+            extModel = this.extensionModels.get(art) || this.extensionModels.get(shortArt);
+          }
+          if (extModel) {
+            const found = findConfigInModel(extModel);
+            if (found) return found;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error resolving ConfigurationModel:', e);
+    }
+
+    return null;
   }
 
   /**
@@ -127,28 +397,44 @@ export class ExtensionCatalog {
     const artifactShort = dep.artifactId.replace(/^mule-/, '').replace(/-connector$/, '').replace(/-module$/, '');
     this.prefixToIconId.set(artifactShort, `${dep.groupId}:${dep.artifactId}`);
 
-    // Check cache
-    if (this.cache) {
-      const cached = this.cache.get(cacheKey, jarPath);
-      if (cached) {
-        for (const desc of cached.descriptors) {
-          this.dynamicDescriptors.set(`${desc.namespaceUri}:${desc.localName}`, desc);
-        }
-        return;
+    const cache = this.getCache();
+
+    // 1. Check cache: keyed the same way (groupId:artifactId:version + jar path)
+    const cached = cache.get(cacheKey, jarPath);
+    if (cached) {
+      for (const desc of cached.descriptors) {
+        this.dynamicDescriptors.set(`${desc.namespaceUri}:${desc.localName}`, desc);
+      }
+      if (cached.extensionModel) {
+        this.registerExtensionModel(dep.artifactId, cached.extensionModel);
+        return; // Full cache hit! Jar file is NOT opened.
       }
     }
 
-    // Read jar
+    // 2. Cache miss: Open jar ONCE for both XSD classification & extension model extraction
     try {
-      const metadata = await JarReader.readJar(jarPath, dep.groupId, dep.artifactId, dep.version);
+      const zip = await JarReader.openJar(jarPath);
+      if (!zip) {
+        return;
+      }
+
+      // Read both XSD metadata and extension model using the SAME open JSZip instance
+      const metadata = await JarReader.readJar(jarPath, dep.groupId, dep.artifactId, dep.version, zip);
+      const extModel = await ExtensionModelReader.readFromJar(zip);
+
       if (metadata) {
         for (const desc of metadata.descriptors) {
           this.dynamicDescriptors.set(`${desc.namespaceUri}:${desc.localName}`, desc);
         }
+      }
 
-        if (this.cache) {
-          this.cache.set(cacheKey, jarPath, metadata);
-        }
+      if (extModel) {
+        this.registerExtensionModel(dep.artifactId, extModel);
+      }
+
+      if (metadata) {
+        metadata.extensionModel = extModel || undefined;
+        cache.set(cacheKey, jarPath, metadata, extModel || undefined);
       }
     } catch (e) {
       console.warn(`Failed loading connector metadata for ${cacheKey}:`, e);

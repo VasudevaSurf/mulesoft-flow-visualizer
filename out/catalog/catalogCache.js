@@ -67,6 +67,9 @@ class CatalogCache {
             const entries = JSON.parse(data);
             for (const entry of entries) {
                 this.memoryCache.set(entry.key, entry);
+                if (entry.extensionModel && !entry.metadata.extensionModel) {
+                    entry.metadata.extensionModel = entry.extensionModel;
+                }
                 if (entry.iconSymbol && entry.metadata.iconId) {
                     iconStore_1.IconStore.registerSymbol(entry.metadata.iconId, entry.iconSymbol);
                 }
@@ -104,12 +107,41 @@ class CatalogCache {
         catch {
             // If stat fails, continue with cache or return null
         }
+        if (entry.extensionModel && !entry.metadata.extensionModel) {
+            entry.metadata.extensionModel = entry.extensionModel;
+        }
         if (entry.iconSymbol && entry.metadata.iconId) {
             iconStore_1.IconStore.registerSymbol(entry.metadata.iconId, entry.iconSymbol);
         }
         return entry.metadata;
     }
-    set(key, jarPath, metadata) {
+    getEntry(key, jarPath) {
+        const entry = this.memoryCache.get(key);
+        if (!entry) {
+            return null;
+        }
+        try {
+            if (fs.existsSync(jarPath)) {
+                const stats = fs.statSync(jarPath);
+                if (stats.mtimeMs !== entry.mtime || stats.size !== entry.size) {
+                    this.memoryCache.delete(key);
+                    return null;
+                }
+            }
+        }
+        catch {
+            // Ignore
+        }
+        if (entry.extensionModel && !entry.metadata.extensionModel) {
+            entry.metadata.extensionModel = entry.extensionModel;
+        }
+        return entry;
+    }
+    getExtensionModel(key, jarPath) {
+        const metadata = this.get(key, jarPath);
+        return metadata?.extensionModel || null;
+    }
+    set(key, jarPath, metadata, extensionModel) {
         let mtime = 0;
         let size = 0;
         try {
@@ -122,13 +154,17 @@ class CatalogCache {
         catch {
             // Ignore
         }
+        const extModel = extensionModel !== undefined ? extensionModel : metadata.extensionModel;
+        metadata.extensionModel = extModel;
         const iconSymbol = metadata.iconId ? iconStore_1.IconStore.getSymbol(metadata.iconId) : undefined;
         this.memoryCache.set(key, {
             key,
+            jarPath,
             mtime,
             size,
             metadata,
             iconSymbol,
+            extensionModel: extModel,
         });
         this.saveToDisk();
     }

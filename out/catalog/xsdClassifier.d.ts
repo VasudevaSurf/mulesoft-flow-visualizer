@@ -4,6 +4,10 @@ export interface XsdParseResult {
     prefix?: string;
     descriptors: ComponentDescriptor[];
 }
+/**
+ * Determines if an element is a message source based on XSD substitutionGroup or naming patterns.
+ */
+export declare function isLikelySourceElement(name: string, substitutionGroup?: string): boolean;
 export declare class XsdClassifier {
     private static parser;
     /**

@@ -73,8 +73,8 @@ export class MeasureEngine {
       };
     }
 
-    // Router or Error Handler
-    if (kind === 'router' || kind === 'error-handler' || node.routes.length > 0) {
+    // Router, Error Handler, or any node with multiple branches stacked vertically
+    if (node.routes.length > 0 || kind === 'router' || kind === 'error-handler') {
       if (node.routes.length === 0) {
         // Degenerate router with 0 routes: render container with one empty lane
         const emptyChain = this.measureChain([], depth + 1);
@@ -93,6 +93,9 @@ export class MeasureEngine {
       const measuredRoutes: MeasuredRoute[] = [];
       let maxLaneW = 0;
       let totalLanesH = 0;
+      let runningY = 0;
+      let firstBranchLaneOffset = 0;
+      let lastBranchLaneOffset = 0;
 
       for (let i = 0; i < node.routes.length; i++) {
         const r = node.routes[i];
@@ -106,16 +109,29 @@ export class MeasureEngine {
         if (routeW > maxLaneW) {
           maxLaneW = routeW;
         }
+
+        const branchInternalLaneY = L.routeLabelH + inner.laneY;
+        const branchAbsoluteLaneOffset = runningY + branchInternalLaneY;
+
+        if (i === 0) {
+          firstBranchLaneOffset = branchAbsoluteLaneOffset;
+        }
+        if (i === node.routes.length - 1) {
+          lastBranchLaneOffset = branchAbsoluteLaneOffset;
+        }
+
         totalLanesH += routeH;
+        runningY += routeH;
         if (i < node.routes.length - 1) {
           totalLanesH += L.routeGapY;
+          runningY += L.routeGapY;
         }
 
         measuredRoutes.push({
           route: r,
           w: routeW,
           h: routeH,
-          laneY: L.routeLabelH + inner.laneY,
+          laneY: branchInternalLaneY,
           innerChain: inner,
         });
       }
@@ -130,13 +146,14 @@ export class MeasureEngine {
         mr.w = finalLaneW;
       }
 
-      const firstRouteLaneY = measuredRoutes[0].laneY;
+      // Midpoint between the first branch's absolute lane position and the last branch's absolute lane position
+      const midpointBranchLaneOffset = (firstBranchLaneOffset + lastBranchLaneOffset) / 2;
 
       return {
         node,
         w: totalRouterW,
         h: totalLanesH + L.routerPad.top + L.routerPad.bottom,
-        laneY: L.routerPad.top + firstRouteLaneY,
+        laneY: L.routerPad.top + midpointBranchLaneOffset,
         innerRoutes: measuredRoutes,
       };
     }
@@ -220,11 +237,9 @@ export class MeasureEngine {
 
     let sourceMeasured: MeasuredNode | null = null;
     let sourceW = 0;
-    if (flow.type === 'flow') {
+    if (flow.type === 'flow' && flow.source) {
       sourceW = L.sourceCompartmentW + L.sourceDividerW;
-      if (flow.source) {
-        sourceMeasured = this.measureNode(flow.source, 0);
-      }
+      sourceMeasured = this.measureNode(flow.source, 0);
     }
 
     const sourceH = flow.source ? L.tile.h : 0;

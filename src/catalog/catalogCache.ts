@@ -3,12 +3,16 @@ import * as path from 'path';
 import { JarExtensionMetadata } from './jarReader';
 import { IconStore } from './iconStore';
 
+import { ExtensionModel } from './extensionModelReader';
+
 export interface CacheEntry {
   key: string;
+  jarPath?: string;
   mtime: number;
   size: number;
   metadata: JarExtensionMetadata;
   iconSymbol?: string;
+  extensionModel?: ExtensionModel | null;
 }
 
 export class CatalogCache {
@@ -46,6 +50,9 @@ export class CatalogCache {
       const entries: CacheEntry[] = JSON.parse(data);
       for (const entry of entries) {
         this.memoryCache.set(entry.key, entry);
+        if (entry.extensionModel && !entry.metadata.extensionModel) {
+          entry.metadata.extensionModel = entry.extensionModel;
+        }
         if (entry.iconSymbol && entry.metadata.iconId) {
           IconStore.registerSymbol(entry.metadata.iconId, entry.iconSymbol);
         }
@@ -84,13 +91,52 @@ export class CatalogCache {
       // If stat fails, continue with cache or return null
     }
 
+    if (entry.extensionModel && !entry.metadata.extensionModel) {
+      entry.metadata.extensionModel = entry.extensionModel;
+    }
+
     if (entry.iconSymbol && entry.metadata.iconId) {
       IconStore.registerSymbol(entry.metadata.iconId, entry.iconSymbol);
     }
     return entry.metadata;
   }
 
-  public set(key: string, jarPath: string, metadata: JarExtensionMetadata): void {
+  public getEntry(key: string, jarPath: string): CacheEntry | null {
+    const entry = this.memoryCache.get(key);
+    if (!entry) {
+      return null;
+    }
+
+    try {
+      if (fs.existsSync(jarPath)) {
+        const stats = fs.statSync(jarPath);
+        if (stats.mtimeMs !== entry.mtime || stats.size !== entry.size) {
+          this.memoryCache.delete(key);
+          return null;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (entry.extensionModel && !entry.metadata.extensionModel) {
+      entry.metadata.extensionModel = entry.extensionModel;
+    }
+
+    return entry;
+  }
+
+  public getExtensionModel(key: string, jarPath: string): ExtensionModel | null {
+    const metadata = this.get(key, jarPath);
+    return metadata?.extensionModel || null;
+  }
+
+  public set(
+    key: string,
+    jarPath: string,
+    metadata: JarExtensionMetadata,
+    extensionModel?: ExtensionModel | null
+  ): void {
     let mtime = 0;
     let size = 0;
     try {
@@ -103,13 +149,18 @@ export class CatalogCache {
       // Ignore
     }
 
+    const extModel = extensionModel !== undefined ? extensionModel : metadata.extensionModel;
+    metadata.extensionModel = extModel;
+
     const iconSymbol = metadata.iconId ? IconStore.getSymbol(metadata.iconId) : undefined;
     this.memoryCache.set(key, {
       key,
+      jarPath,
       mtime,
       size,
       metadata,
       iconSymbol,
+      extensionModel: extModel,
     });
 
     this.saveToDisk();

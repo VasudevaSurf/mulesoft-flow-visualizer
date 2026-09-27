@@ -12,6 +12,16 @@ export declare class WorkspaceScanner {
      */
     static findMuleXmlFiles(): Promise<vscode.Uri[]>;
     /**
+     * Scans all Mule XML files in the project for top-level XML elements matching the configuration tag.
+     * Returns a list of unique 'name' attribute values.
+     */
+    static findConfigurationNames(configXmlTag: string, currentDocUri?: vscode.Uri | null): Promise<string[]>;
+    /**
+     * Finds the best target XML file to insert global configurations.
+     * Checks whether the project has a convention of a dedicated global config file like global.xml or config.xml.
+     */
+    static findTargetConfigFile(currentDocUri: vscode.Uri | null): Promise<vscode.Uri | null>;
+    /**
      * Finds the nearest pom.xml by walking up the directory tree from the given Mule XML file path.
      */
     static findNearestPom(xmlFilePath: string): string | null;

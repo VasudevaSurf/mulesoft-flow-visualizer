@@ -40,8 +40,8 @@ export class PlaceEngine {
     let sourceBox: Box | null = null;
     let positionedSource: PositionedNode | null = null;
 
-    const isFullFlow = mFlow.flow.type === 'flow';
-    const sourceW = isFullFlow ? L.sourceCompartmentW + L.sourceDividerW : 0;
+    const hasSource = mFlow.flow.type === 'flow' && !!mFlow.sourceMeasured;
+    const sourceW = hasSource ? L.sourceCompartmentW + L.sourceDividerW : 0;
     const bodyY = flowY + L.flowHeaderH + L.flowPad.top;
     const bodyH = Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? L.tile.h : 0, L.laneMinH);
 
@@ -55,7 +55,7 @@ export class PlaceEngine {
 
     const processLaneY = bodyY + mFlow.processChain.laneY;
 
-    if (isFullFlow) {
+    if (hasSource && mFlow.sourceMeasured) {
       sourceBox = {
         x: flowX + L.flowPad.left,
         y: bodyY,
@@ -63,11 +63,9 @@ export class PlaceEngine {
         height: bodyH,
       };
 
-      if (mFlow.sourceMeasured) {
-        const srcX = sourceBox.x + (L.sourceCompartmentW - mFlow.sourceMeasured.w) / 2;
-        const srcY = processLaneY - mFlow.sourceMeasured.laneY;
-        positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
-      }
+      const srcX = sourceBox.x + (L.sourceCompartmentW - mFlow.sourceMeasured.w) / 2;
+      const srcY = processLaneY - mFlow.sourceMeasured.laneY;
+      positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
     }
 
     // Place process chain
