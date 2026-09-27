@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Node } from '../parser/types';
+import { SemanticModel, Node } from '../parser/types';
 export declare class FlowVisualizerPanel {
     static currentPanel: FlowVisualizerPanel | undefined;
     private static readonly viewType;
@@ -37,7 +37,8 @@ export declare class FlowVisualizerPanel {
     private handleUpdateParameterValue;
     private handleTransformScriptUpdate;
     private handleTestConnection;
-    private findNodeInModel;
+    static findNodeInModel(model: SemanticModel, id: string): Node | null;
+    findNodeInModel(model: SemanticModel, id: string): Node | null;
     private parseObjectKeys;
     private extractDataWeaveShape;
     private computeStaticAutocompleteContext;

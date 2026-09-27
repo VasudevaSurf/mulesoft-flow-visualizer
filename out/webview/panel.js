@@ -1050,7 +1050,7 @@ class FlowVisualizerPanel {
             });
         }
     }
-    findNodeInModel(model, id) {
+    static findNodeInModel(model, id) {
         const searchNode = (n) => {
             if (n.id === id)
                 return n;
@@ -1093,6 +1093,9 @@ class FlowVisualizerPanel {
             }
         }
         return null;
+    }
+    findNodeInModel(model, id) {
+        return FlowVisualizerPanel.findNodeInModel(model, id);
     }
     parseObjectKeys(objContent) {
         const keys = [];

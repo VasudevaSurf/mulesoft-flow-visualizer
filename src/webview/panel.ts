@@ -1237,7 +1237,7 @@ export class FlowVisualizerPanel {
     }
   }
 
-  private findNodeInModel(model: SemanticModel, id: string): Node | null {
+  public static findNodeInModel(model: SemanticModel, id: string): Node | null {
     const searchNode = (n: Node): Node | null => {
       if (n.id === id) return n;
       for (const c of n.chain) {
@@ -1276,6 +1276,10 @@ export class FlowVisualizerPanel {
     }
 
     return null;
+  }
+
+  public findNodeInModel(model: SemanticModel, id: string): Node | null {
+    return FlowVisualizerPanel.findNodeInModel(model, id);
   }
 
   private parseObjectKeys(objContent: string): Array<{ name: string; children?: string[] }> {
