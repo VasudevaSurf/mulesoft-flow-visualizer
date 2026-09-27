@@ -1139,7 +1139,7 @@ export class ExtensionModelReader {
             name: p['@_name'],
             description: typeof p.description === 'string' ? p.description : '',
             required: false,
-            group: p['@_tab'] || p['@_group'],
+            group: 'General',
           });
         });
 
@@ -1172,7 +1172,7 @@ export class ExtensionModelReader {
             name: p['@_name'],
             description: typeof p.description === 'string' ? p.description : '',
             required: false,
-            group: p['@_tab'] || p['@_group'],
+            group: 'General',
           });
         });
 
@@ -1228,7 +1228,7 @@ export class ExtensionModelReader {
             name: p['@_name'],
             description: typeof p.description === 'string' ? p.description : '',
             required: false,
-            group: p['@_tab'] || p['@_group'],
+            group: 'General',
           });
         });
 
@@ -1274,7 +1274,7 @@ export class ExtensionModelReader {
             name: p['@_name'],
             description: typeof p.description === 'string' ? p.description : '',
             required: false,
-            group: p['@_tab'] || p['@_group'],
+            group: 'General',
           });
         });
 

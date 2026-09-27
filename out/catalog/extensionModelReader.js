@@ -892,7 +892,7 @@ class ExtensionModelReader {
                     name: p['@_name'],
                     description: typeof p.description === 'string' ? p.description : '',
                     required: false,
-                    group: p['@_tab'] || p['@_group'],
+                    group: 'General',
                 });
             });
             const connGroups = groupParameters(params);
@@ -922,7 +922,7 @@ class ExtensionModelReader {
                     name: p['@_name'],
                     description: typeof p.description === 'string' ? p.description : '',
                     required: false,
-                    group: p['@_tab'] || p['@_group'],
+                    group: 'General',
                 });
             });
             // Match connections to this config: e.g. "listenerConfig" -> connection "listener"
@@ -973,7 +973,7 @@ class ExtensionModelReader {
                     name: p['@_name'],
                     description: typeof p.description === 'string' ? p.description : '',
                     required: false,
-                    group: p['@_tab'] || p['@_group'],
+                    group: 'General',
                 });
             });
             // Inject config-ref if not explicitly present and configurations exist
@@ -1013,7 +1013,7 @@ class ExtensionModelReader {
                     name: p['@_name'],
                     description: typeof p.description === 'string' ? p.description : '',
                     required: false,
-                    group: p['@_tab'] || p['@_group'],
+                    group: 'General',
                 });
             });
             // Inject config-ref if not explicitly present and configurations exist
