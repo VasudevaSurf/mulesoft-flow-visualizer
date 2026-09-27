@@ -202,10 +202,22 @@ export class WebviewHtmlBuilder {
       opacity: 0.8;
     }
 
+    /* ── Main Content Area (Canvas + Bottom Properties) ── */
+    #main-area {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      min-width: 0;
+    }
+
     /* ── Canvas Viewport ────────────────────────────── */
     #viewport {
       flex: 1;
-      height: 100%;
+      width: 100%;
+      min-height: 0;
       position: relative;
       overflow: hidden;
       cursor: grab;
@@ -441,20 +453,43 @@ export class WebviewHtmlBuilder {
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
 
-    /* ── Properties Docked Side Panel ──────────────── */
+    /* ── Properties Docked Bottom Panel ─────────────── */
     #properties-panel {
-      width: 360px;
-      height: 100%;
+      width: 100%;
+      height: 280px;
+      min-height: 80px;
       background: var(--flow-bg);
-      border-left: 1px solid var(--border);
+      border-top: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       z-index: 60;
-      transition: transform 0.2s ease, width 0.2s ease;
-      box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+      position: relative;
+      flex-shrink: 0;
+      transition: transform 0.2s ease, height 0.2s ease;
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
     }
     #properties-panel.collapsed {
-      display: none;
+      transform: translateY(100%);
+      height: 0 !important;
+      min-height: 0 !important;
+      border-top-color: transparent !important;
+      overflow: hidden !important;
+      pointer-events: none;
+    }
+    .properties-resizer {
+      position: absolute;
+      top: -4px;
+      left: 0;
+      right: 0;
+      height: 8px;
+      cursor: ns-resize;
+      background: transparent;
+      z-index: 100;
+      transition: background 0.15s ease;
+    }
+    .properties-resizer:hover,
+    .properties-resizer.resizing {
+      background: var(--accent);
     }
     .properties-header {
       padding: 12px 14px;
@@ -469,6 +504,12 @@ export class WebviewHtmlBuilder {
       align-items: center;
       gap: 10px;
       overflow: hidden;
+    }
+    .properties-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
     }
     .properties-icon-chip {
       width: 28px;
@@ -540,11 +581,16 @@ export class WebviewHtmlBuilder {
     }
     .prop-tab-pane {
       display: none;
-      flex-direction: column;
-      gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px 24px;
+      align-items: start;
     }
     .prop-tab-pane.active {
-      display: flex;
+      display: grid;
+    }
+    .test-connection-section,
+    .prop-list-group {
+      grid-column: 1 / -1;
     }
     .prop-form-group {
       display: flex;
@@ -804,55 +850,62 @@ export class WebviewHtmlBuilder {
       <ul id="global-config-list" style="list-style: none; margin: 0; padding: 0;"></ul>
     </div>
 
-    <!-- Main Canvas Viewport -->
-    <div id="viewport">
-      <div id="warning-banner"></div>
+    <!-- Main Content Area: Diagram Canvas above, Bottom Docked Properties below -->
+    <div id="main-area">
+      <!-- Main Canvas Viewport -->
+      <div id="viewport">
+        <div id="warning-banner"></div>
 
-      <!-- Floating Toolbar -->
-      <div id="toolbar">
-        <div id="search-box">
-          <input type="text" id="search-input" placeholder="Search (Ctrl+F)..." spellcheck="false" />
-          <span id="search-count"></span>
+        <!-- Floating Toolbar -->
+        <div id="toolbar">
+          <div id="search-box">
+            <input type="text" id="search-input" placeholder="Search (Ctrl+F)..." spellcheck="false" />
+            <span id="search-count"></span>
+          </div>
+          <button class="tool-btn" id="btn-zoom-in" title="Zoom In (+)">+</button>
+          <button class="tool-btn" id="btn-zoom-out" title="Zoom Out (−)">−</button>
+          <button class="tool-btn" id="btn-zoom-reset" title="Reset Zoom (100%)">100%</button>
+          <button class="tool-btn" id="btn-fit" title="Fit to View">Fit</button>
+          <button class="tool-btn" id="btn-export-svg" title="Export as SVG">SVG</button>
+          <button class="tool-btn" id="btn-export-png" title="Export as PNG">PNG</button>
+          <button class="tool-btn" id="btn-toggle-sidebar" title="Toggle Flow List">☰</button>
+          <button class="tool-btn" id="btn-toggle-properties" title="Toggle Properties Panel">⚙ Properties</button>
         </div>
-        <button class="tool-btn" id="btn-zoom-in" title="Zoom In (+)">+</button>
-        <button class="tool-btn" id="btn-zoom-out" title="Zoom Out (−)">−</button>
-        <button class="tool-btn" id="btn-zoom-reset" title="Reset Zoom (100%)">100%</button>
-        <button class="tool-btn" id="btn-fit" title="Fit to View">Fit</button>
-        <button class="tool-btn" id="btn-export-svg" title="Export as SVG">SVG</button>
-        <button class="tool-btn" id="btn-export-png" title="Export as PNG">PNG</button>
-        <button class="tool-btn" id="btn-toggle-sidebar" title="Toggle Flow List">☰</button>
-        <button class="tool-btn" id="btn-toggle-properties" title="Toggle Properties Panel">⚙ Properties</button>
+
+        <!-- SVG Rendering Canvas -->
+        <svg id="canvas-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+          <defs id="svg-defs">
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--lane-line)"/>
+            </marker>
+          </defs>
+          <g id="scene-root"></g>
+        </svg>
       </div>
 
-      <!-- SVG Rendering Canvas -->
-      <svg id="canvas-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-        <defs id="svg-defs">
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M0,0 L10,5 L0,10 z" fill="var(--lane-line)"/>
-          </marker>
-        </defs>
-        <g id="scene-root"></g>
-      </svg>
-    </div>
-
-    <!-- Docked Properties Side Panel -->
-    <div id="properties-panel" class="properties-dock collapsed">
-      <div class="properties-header">
-        <div class="properties-header-title">
-          <span class="properties-icon-chip" id="prop-icon">⚙</span>
-          <div>
-            <div class="properties-title" id="prop-title">Properties</div>
-            <div class="properties-subtitle" id="prop-subtitle">Select a component</div>
+      <!-- Docked Properties Bottom Panel -->
+      <div id="properties-panel" class="properties-dock collapsed">
+        <div id="properties-resizer" class="properties-resizer" title="Drag to resize"></div>
+        <div class="properties-header">
+          <div class="properties-header-title">
+            <span class="properties-icon-chip" id="prop-icon">⚙</span>
+            <div>
+              <div class="properties-title" id="prop-title">Properties</div>
+              <div class="properties-subtitle" id="prop-subtitle">Select a component</div>
+            </div>
+          </div>
+          <div class="properties-header-actions">
+            <button class="tool-btn" id="btn-goto-xml" title="Go to XML source (or double-click tile)">↗ XML</button>
+            <button class="tool-btn" id="btn-close-properties" title="Close Properties">✕</button>
           </div>
         </div>
-        <button class="tool-btn" id="btn-close-properties" title="Close Properties">✕</button>
-      </div>
-      
-      <div class="properties-tabs" id="prop-tabs-header"></div>
+        
+        <div class="properties-tabs" id="prop-tabs-header"></div>
 
-      <div class="properties-content" id="prop-tabs-content">
-        <div class="properties-empty-state" id="prop-empty">
-          Click any processor or message source on the canvas to inspect its configuration and attributes.
+        <div class="properties-content" id="prop-tabs-content">
+          <div class="properties-empty-state" id="prop-empty">
+            Click any processor or message source on the canvas to inspect its configuration and attributes.
+          </div>
         </div>
       </div>
     </div>
@@ -971,12 +1024,49 @@ export class WebviewHtmlBuilder {
     };
 
     const propertiesPanel = document.getElementById('properties-panel');
+    const propertiesResizer = document.getElementById('properties-resizer');
     document.getElementById('btn-toggle-properties').onclick = () => {
       propertiesPanel.classList.toggle('collapsed');
     };
     document.getElementById('btn-close-properties').onclick = () => {
       propertiesPanel.classList.add('collapsed');
     };
+
+    // Draggable resize handle for bottom properties panel
+    if (propertiesResizer && propertiesPanel) {
+      let isResizing = false;
+      let startY = 0;
+      let startHeight = 0;
+
+      propertiesResizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startY = e.clientY;
+        startHeight = propertiesPanel.getBoundingClientRect().height;
+        propertiesResizer.classList.add('resizing');
+        propertiesPanel.style.transition = 'none';
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        const deltaY = e.clientY - startY;
+        const newHeight = Math.max(100, Math.min(window.innerHeight - 80, startHeight - deltaY));
+        propertiesPanel.style.height = newHeight + 'px';
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isResizing) {
+          isResizing = false;
+          propertiesResizer.classList.remove('resizing');
+          propertiesPanel.style.transition = '';
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        }
+      });
+    }
 
     function findNodeById(id) {
       if (!currentModel || !id) return null;
@@ -1187,9 +1277,6 @@ export class WebviewHtmlBuilder {
           li.onclick = () => {
             document.querySelectorAll('.flow-item').forEach(i => i.classList.remove('active'));
             li.classList.add('active');
-            if (gNode.range) {
-              vscode.postMessage({ type: 'revealXml', range: gNode.range });
-            }
             vscode.postMessage({
               type: 'showProperties',
               nodeId: gNode.id,
@@ -1213,12 +1300,11 @@ export class WebviewHtmlBuilder {
       sceneRoot.innerHTML = svgHtml;
       updateTransform();
 
-      // Bind tile clicks
+      // Bind tile clicks — single click only opens Properties
       document.querySelectorAll('.tile-group').forEach(tile => {
         tile.addEventListener('click', (e) => {
           e.stopPropagation();
           const nodeId = tile.getAttribute('data-node-id');
-          const rangeJson = tile.getAttribute('data-range');
           const flowRefTarget = tile.getAttribute('data-flow-ref');
 
           highlightNode(nodeId, false);
@@ -1235,13 +1321,6 @@ export class WebviewHtmlBuilder {
             }
           }
 
-          if (rangeJson) {
-            try {
-              const range = JSON.parse(rangeJson);
-              vscode.postMessage({ type: 'revealXml', range });
-            } catch {}
-          }
-
           // Send showProperties message to host
           const clickedNode = findNodeById(nodeId);
           if (clickedNode && clickedNode.descriptor) {
@@ -1252,6 +1331,18 @@ export class WebviewHtmlBuilder {
               localName: clickedNode.descriptor.localName,
               attributes: clickedNode.attributes || {},
             });
+          }
+        });
+
+        // Double-click navigates to XML source
+        tile.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          const rangeJson = tile.getAttribute('data-range');
+          if (rangeJson) {
+            try {
+              const range = JSON.parse(rangeJson);
+              vscode.postMessage({ type: 'revealXml', range, focusEditor: true });
+            } catch {}
           }
         });
       });
@@ -1283,18 +1374,11 @@ export class WebviewHtmlBuilder {
         });
       });
 
-      // Bind collapsed container tiles (expand on click + reveal XML)
+      // Bind collapsed container tiles (expand on click + show properties, no XML reveal)
       document.querySelectorAll('.container-collapsed-tile').forEach(tile => {
         tile.addEventListener('click', (e) => {
           e.stopPropagation();
           const nodeId = tile.getAttribute('data-node-id');
-          const rangeJson = tile.getAttribute('data-range');
-          if (rangeJson) {
-            try {
-              const range = JSON.parse(rangeJson);
-              vscode.postMessage({ type: 'revealXml', range });
-            } catch {}
-          }
           const clickedNode = findNodeById(nodeId);
           if (clickedNode && clickedNode.descriptor) {
             vscode.postMessage({
@@ -1306,6 +1390,18 @@ export class WebviewHtmlBuilder {
             });
           }
           vscode.postMessage({ type: 'toggleCollapse', nodeId });
+        });
+
+        // Double-click navigates to XML source
+        tile.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          const rangeJson = tile.getAttribute('data-range');
+          if (rangeJson) {
+            try {
+              const range = JSON.parse(rangeJson);
+              vscode.postMessage({ type: 'revealXml', range, focusEditor: true });
+            } catch {}
+          }
         });
       });
     }
@@ -1587,6 +1683,7 @@ export class WebviewHtmlBuilder {
       const tabsHeader = document.getElementById('prop-tabs-header');
       const tabsContent = document.getElementById('prop-tabs-content');
       const emptyEl = document.getElementById('prop-empty');
+      const gotoXmlBtn = document.getElementById('btn-goto-xml');
 
       if (!panel) return;
       panel.classList.remove('collapsed');
@@ -1595,6 +1692,19 @@ export class WebviewHtmlBuilder {
 
       titleEl.textContent = data.displayName || 'Component Properties';
       subEl.textContent = 'ID: ' + (data.nodeId || '');
+
+      // Wire the "Go to XML" button to reveal this node's source range
+      if (gotoXmlBtn) {
+        const selNode = findNodeById(data.nodeId);
+        if (selNode && selNode.range) {
+          gotoXmlBtn.style.display = '';
+          gotoXmlBtn.onclick = function() {
+            vscode.postMessage({ type: 'revealXml', range: selNode.range, focusEditor: true });
+          };
+        } else {
+          gotoXmlBtn.style.display = 'none';
+        }
+      }
 
       tabsHeader.innerHTML = '';
       tabsContent.innerHTML = '';

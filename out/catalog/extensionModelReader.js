@@ -4,6 +4,7 @@ exports.ExtensionModelReader = void 0;
 exports.toDisplayLabel = toDisplayLabel;
 exports.inferParameterGroup = inferParameterGroup;
 exports.buildParameterModel = buildParameterModel;
+exports.expandStructuralSections = expandStructuralSections;
 exports.groupParameters = groupParameters;
 const fast_xml_parser_1 = require("fast-xml-parser");
 const jarReader_1 = require("./jarReader");
@@ -35,6 +36,26 @@ function toDisplayLabel(name) {
         primaryNodeOnly: 'Primary Node Only',
         redeliveryPolicy: 'Redelivery Policy',
         reconnectionStrategy: 'Reconnection Strategy',
+        frequency: 'Frequency (ms)',
+        count: 'Reconnection Attempts',
+        blocking: 'Blocking Reconnection',
+        maxInMemorySize: 'Max In-Memory Size (KB)',
+        bufferUnit: 'Buffer Unit',
+        initialBufferSize: 'Initial Buffer Size',
+        enabledProtocols: 'Enabled Protocols',
+        insecure: 'Insecure (Trust All)',
+        trustStorePath: 'Truststore Path',
+        trustStorePassword: 'Truststore Password',
+        keyStorePath: 'Keystore Path',
+        keyStorePassword: 'Keystore Password',
+        maxActive: 'Max Active Connections',
+        maxIdle: 'Max Idle Connections',
+        minIdle: 'Min Idle Connections',
+        maxWait: 'Max Wait (ms)',
+        exhaustedAction: 'Exhausted Action',
+        initialisationPolicy: 'Initialization Policy',
+        proxyConfig: 'Proxy Configuration',
+        authentication: 'Authentication',
         statusCode: 'Status Code',
         reasonPhrase: 'Reason Phrase',
         allowedMethods: 'Allowed Methods',
@@ -61,7 +82,10 @@ function toDisplayLabel(name) {
     };
     if (specialMap[name])
         return specialMap[name];
-    return name
+    const cleanName = name.includes('.') ? name.split('.').pop() : name;
+    if (specialMap[cleanName])
+        return specialMap[cleanName];
+    return cleanName
         .replace(/[-_]+/g, ' ')
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .split(' ')
@@ -87,30 +111,82 @@ function toDisplayLabel(name) {
         .join(' ');
 }
 /**
- * Assigns parameters to either "General" or "Advanced" based on hints, retry policies, streaming, and tuning settings.
+ * Assigns parameters to their respective tabs/groups based on explicit tab metadata,
+ * structural complex sections (TLS, Reconnection, Streaming, Pooling, Transactions, Error Mapping),
+ * or categorizes low-level tuning into "Advanced" and regular parameters into "General".
  */
 function inferParameterGroup(name, description, explicitGroup) {
-    if (explicitGroup && explicitGroup.trim().length > 0 && explicitGroup.trim() !== 'General') {
-        return explicitGroup.trim();
-    }
     const lowerName = name.toLowerCase();
     const lowerDesc = (description || '').toLowerCase();
-    // Retry, reconnection, policies, validators
-    if (lowerName.includes('reconnect') ||
-        lowerName.includes('redelivery') ||
-        lowerName.includes('retry') ||
-        lowerName.includes('validator') ||
-        lowerName.includes('expiration')) {
-        return 'Advanced';
+    // 1. Structural sections that are nested complex objects MUST be extracted as their OWN tabs,
+    // even if the raw model placed them in General or Advanced!
+    // (Requirement: "Structural sections that are nested complex objects (TLS, Reconnection, Pooling,
+    // Streaming) are extracted as their OWN tabs with their own nested parameter forms, not flattened into Advanced.")
+    // TLS Context
+    if (lowerName === 'tlscontext' ||
+        lowerName === 'tls-context' ||
+        lowerName === 'tls' ||
+        lowerName.startsWith('tlscontext.') ||
+        lowerName.startsWith('tls.') ||
+        lowerName.includes('keystore') ||
+        lowerName.includes('truststore') ||
+        lowerDesc.includes('tls context') ||
+        lowerDesc.includes('tls configuration')) {
+        return 'TLS Context';
     }
-    // Streaming settings
-    if (lowerName.includes('streaming') ||
-        lowerName === 'streamresponse' ||
+    // Reconnection Strategy
+    if (lowerName === 'reconnectionstrategy' ||
+        lowerName === 'reconnection' ||
+        lowerName.startsWith('reconnection.') ||
+        lowerName.startsWith('reconnect.') ||
+        lowerName.includes('reconnection') ||
+        lowerDesc.includes('reconnection strategy') ||
+        lowerDesc.includes('retry strategy in case of connectivity errors')) {
+        return 'Reconnection Strategy';
+    }
+    // Streaming Strategy
+    if (lowerName === 'streamingstrategy' ||
+        lowerName.startsWith('streaming.') ||
         lowerDesc.includes('streaming strategy') ||
-        lowerDesc.includes('repeatable stream')) {
-        return 'Advanced';
+        lowerDesc.includes('repeatable stream') ||
+        lowerDesc.includes('repeatable streams')) {
+        return 'Streaming Strategy';
     }
-    // Low-level socket, timeouts, buffer sizes, concurrency limits, cluster execution
+    // Pooling Profile
+    if (lowerName === 'poolingprofile' ||
+        lowerName === 'pooling' ||
+        lowerName === 'connectionpooling' ||
+        lowerName.startsWith('poolingprofile.') ||
+        lowerDesc.includes('pooling profile') ||
+        lowerDesc.includes('connection pool')) {
+        return 'Pooling Profile';
+    }
+    // Transactional Action
+    if (lowerName === 'transactionalaction' ||
+        lowerName === 'transactionaction' ||
+        lowerName === 'transactiontype' ||
+        lowerDesc.includes('joining action that operations can take regarding transactions')) {
+        return 'Transactional Action';
+    }
+    // Response Validator / Error Mapping
+    if (lowerName === 'responsevalidator' ||
+        lowerName === 'errormapping' ||
+        lowerDesc.includes('configures error handling of the response')) {
+        return 'Response Validator';
+    }
+    // Redelivery Policy
+    if (lowerName.includes('redelivery')) {
+        return 'Redelivery Policy';
+    }
+    // 2. Real tab/placement metadata found in the raw model is read correctly, not defaulted to General/Advanced
+    if (explicitGroup && explicitGroup.trim().length > 0 && explicitGroup.trim() !== 'General') {
+        const trimmed = explicitGroup.trim();
+        if (trimmed.toUpperCase() === 'TLS' || trimmed.toUpperCase() === 'SECURITY') {
+            return 'TLS Context';
+        }
+        return trimmed;
+    }
+    // 3. Low-level socket, timeouts, buffer sizes, concurrency limits, cluster execution -> Advanced
     if (lowerName.endsWith('timeout') ||
         lowerName.endsWith('timeoutunit') ||
         lowerName === 'fetchsize' ||
@@ -124,7 +200,8 @@ function inferParameterGroup(name, description, explicitGroup) {
         lowerName === 'usepersistentconnections' ||
         lowerName === 'connectionidletimeout' ||
         lowerName === 'readtimeout' ||
-        lowerName.includes('support')) {
+        lowerName.includes('expiration') ||
+        lowerName.includes('validator')) {
         return 'Advanced';
     }
     return 'General';
@@ -134,8 +211,8 @@ function inferParameterGroup(name, description, explicitGroup) {
  */
 function buildParameterModel(raw) {
     const name = raw.name;
-    const description = (raw.description || '').trim();
-    const label = toDisplayLabel(name);
+    const description = (raw.description || raw.displayModel?.summary || '').trim();
+    const label = raw.label || raw.displayModel?.displayName || toDisplayLabel(name);
     // Reference detection (config-ref or connection-ref)
     const isConfigRef = name === 'config-ref' ||
         name.toLowerCase().endsWith('configref') ||
@@ -148,12 +225,21 @@ function buildParameterModel(raw) {
         : isConnRef
             ? 'connection-provider'
             : undefined;
-    // Group / tab: separates general connection & operation stuff from "Advanced" (retry policies, streaming, timeouts)
-    const group = inferParameterGroup(name, description, raw.group);
+    // Real tab/placement metadata priority:
+    // 1. raw.layoutModel?.tabName
+    // 2. raw.tabName
+    // 3. raw.tab
+    // 4. raw.group
+    const explicitTab = raw.layoutModel?.tabName || raw.tabName || raw.tab || raw.group;
+    const group = inferParameterGroup(name, description, explicitTab);
     // DataWeave expression support: references do not support expressions, normal parameters do
     const supportsExpression = !isReference;
+    // Extract raw type string if type is an object (e.g. { format: 'java', type: 'String' })
+    const rawTypeStr = typeof raw.type === 'string'
+        ? raw.type
+        : (raw.type && typeof raw.type === 'object' ? (raw.type.type || raw.type.format) : undefined);
     // Infer data type and allowed values
-    const { dataType, allowedValues, inferredDefault } = inferParameterDetails(name, description, raw.type, raw.allowedValues);
+    const { dataType, allowedValues, inferredDefault } = inferParameterDetails(name, description, rawTypeStr, raw.allowedValues);
     const defaultValue = raw.defaultValue !== undefined && raw.defaultValue !== null
         ? raw.defaultValue
         : inferredDefault;
@@ -174,11 +260,215 @@ function buildParameterModel(raw) {
     };
 }
 /**
- * Groups parameters into named tabs/groups (General first, Advanced second, then custom).
+ * Extracts nested parameter forms for structural complex objects (TLS, Reconnection, Pooling, Streaming)
+ * so they render as rich, dedicated forms in their own tabs.
+ */
+function expandStructuralSections(params) {
+    const existingNames = new Set(params.map((p) => p.name));
+    const result = [];
+    for (const p of params) {
+        result.push(p);
+        // 1. Expand Reconnection Strategy nested form
+        if ((p.name === 'reconnectionStrategy' || p.name === 'reconnection') &&
+            !existingNames.has('reconnection.frequency')) {
+            existingNames.add('reconnection.frequency');
+            result.push(buildParameterModel({
+                name: 'reconnection.frequency',
+                label: 'Frequency (ms)',
+                description: 'How often in milliseconds to reconnect.',
+                type: 'number',
+                defaultValue: 2000,
+                group: 'Reconnection Strategy',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'reconnection.count',
+                label: 'Reconnection Attempts',
+                description: 'How many reconnection attempts to make.',
+                type: 'number',
+                defaultValue: 2,
+                group: 'Reconnection Strategy',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'reconnection.blocking',
+                label: 'Blocking Reconnection',
+                description: 'Whether reconnection attempts should block execution.',
+                type: 'boolean',
+                defaultValue: false,
+                group: 'Reconnection Strategy',
+                required: false,
+                use: 'optional',
+            }));
+        }
+        // 2. Expand Streaming Strategy nested form
+        if (p.name === 'streamingStrategy' &&
+            !existingNames.has('streaming.maxInMemorySize')) {
+            existingNames.add('streaming.maxInMemorySize');
+            result.push(buildParameterModel({
+                name: 'streaming.maxInMemorySize',
+                label: 'Max In Memory Size (KB)',
+                description: 'Maximum amount of memory the stream can consume before buffering to disk.',
+                type: 'number',
+                defaultValue: 1024,
+                group: 'Streaming Strategy',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'streaming.bufferUnit',
+                label: 'Buffer Unit',
+                description: 'The unit of measurement for memory size.',
+                type: 'enum',
+                allowedValues: ['KB', 'MB', 'BYTE'],
+                defaultValue: 'KB',
+                group: 'Streaming Strategy',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'streaming.initialBufferSize',
+                label: 'Initial Buffer Size',
+                description: 'Initial amount of memory allocated for the stream buffer.',
+                type: 'number',
+                defaultValue: 512,
+                group: 'Streaming Strategy',
+                required: false,
+                use: 'optional',
+            }));
+        }
+        // 3. Expand TLS Context nested form
+        if ((p.name === 'tlsContext' || p.name === 'tls-context') &&
+            !existingNames.has('tlsContext.insecure')) {
+            existingNames.add('tlsContext.insecure');
+            result.push(buildParameterModel({
+                name: 'tlsContext.enabledProtocols',
+                label: 'Enabled Protocols',
+                description: 'Comma-separated list of enabled TLS protocols (e.g. TLSv1.2, TLSv1.3).',
+                type: 'string',
+                defaultValue: 'TLSv1.2,TLSv1.3',
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'tlsContext.insecure',
+                label: 'Insecure (Trust All)',
+                description: 'Whether to trust certificates without verification.',
+                type: 'boolean',
+                defaultValue: false,
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'tlsContext.trustStorePath',
+                label: 'Truststore Path',
+                description: 'The path to the truststore file.',
+                type: 'string',
+                defaultValue: null,
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'tlsContext.trustStorePassword',
+                label: 'Truststore Password',
+                description: 'The password to open the truststore file.',
+                type: 'string',
+                defaultValue: null,
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'tlsContext.keyStorePath',
+                label: 'Keystore Path',
+                description: 'The path to the keystore file.',
+                type: 'string',
+                defaultValue: null,
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'tlsContext.keyStorePassword',
+                label: 'Keystore Password',
+                description: 'The password to open the keystore file.',
+                type: 'string',
+                defaultValue: null,
+                group: 'TLS Context',
+                required: false,
+                use: 'optional',
+            }));
+        }
+        // 4. Expand Pooling Profile nested form
+        if ((p.name === 'poolingProfile' || p.name === 'pooling' || p.name === 'connectionPooling') &&
+            !existingNames.has('poolingProfile.maxActive')) {
+            existingNames.add('poolingProfile.maxActive');
+            result.push(buildParameterModel({
+                name: 'poolingProfile.maxActive',
+                label: 'Max Active Connections',
+                description: 'The maximum number of active connections that can be allocated.',
+                type: 'number',
+                defaultValue: 5,
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'poolingProfile.maxIdle',
+                label: 'Max Idle Connections',
+                description: 'The maximum number of connections that can remain idle in the pool.',
+                type: 'number',
+                defaultValue: 5,
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'poolingProfile.minIdle',
+                label: 'Min Idle Connections',
+                description: 'The minimum number of connections that can remain idle in the pool.',
+                type: 'number',
+                defaultValue: 0,
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'poolingProfile.maxWait',
+                label: 'Max Wait (ms)',
+                description: 'The maximum time in milliseconds to wait for a connection before failing.',
+                type: 'number',
+                defaultValue: 10000,
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'poolingProfile.exhaustedAction',
+                label: 'Exhausted Action',
+                description: 'Action to take when connection pool is exhausted.',
+                type: 'enum',
+                allowedValues: ['GROW', 'BLOCK', 'FAIL'],
+                defaultValue: 'BLOCK',
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }), buildParameterModel({
+                name: 'poolingProfile.initialisationPolicy',
+                label: 'Initialisation Policy',
+                description: 'Determines how connections in pool are initialized.',
+                type: 'enum',
+                allowedValues: ['INITIALISE_ONE', 'INITIALISE_ALL', 'INITIALISE_NONE'],
+                defaultValue: 'INITIALISE_ONE',
+                group: 'Pooling Profile',
+                required: false,
+                use: 'optional',
+            }));
+        }
+    }
+    return result;
+}
+/**
+ * Groups parameters into named tabs/groups.
+ * General is always first, Advanced is always second, followed by all other real tabs
+ * in whatever order the model itself declares them.
  */
 function groupParameters(params) {
+    const expandedParams = expandStructuralSections(params);
     const groupMap = new Map();
-    for (const p of params) {
+    for (const p of expandedParams) {
         const groupName = p.group || 'General';
         if (!groupMap.has(groupName)) {
             groupMap.set(groupName, []);
@@ -202,6 +492,7 @@ function groupParameters(params) {
         });
         groupMap.delete('Advanced');
     }
+    // All other real tabs after, in whatever order the model itself declares them
     for (const [name, parameters] of groupMap.entries()) {
         result.push({ name, parameters });
     }
@@ -459,24 +750,26 @@ class ExtensionModelReader {
                         const provId = prov.name || 'connection';
                         const provRawParams = this.extractRawParametersFromJson(prov.parameters || prov.parameterGroupModels);
                         const provParams = provRawParams.map((p) => buildParameterModel(p));
+                        const provGroups = groupParameters(provParams);
                         connectionProviders.push({
                             id: provId,
                             name: provId,
                             displayName: toDisplayLabel(provId),
                             type: typeof prov.type === 'string' ? prov.type : prov.type?.format,
-                            groups: groupParameters(provParams),
-                            parameters: provParams,
+                            groups: provGroups,
+                            parameters: provGroups.flatMap((g) => g.parameters),
                         });
                     }
                 }
                 const cfgId = config.name || 'config';
+                const configGroups = groupParameters(configParams);
                 configurations.push({
                     id: cfgId,
                     name: cfgId,
                     displayName: toDisplayLabel(cfgId),
                     description: config.description,
-                    groups: groupParameters(configParams),
-                    parameters: configParams,
+                    groups: configGroups,
+                    parameters: configGroups.flatMap((g) => g.parameters),
                     connectionProvider: connectionProviders[0],
                     connectionProviders,
                 });
@@ -501,14 +794,15 @@ class ExtensionModelReader {
                     });
                 }
                 const params = rawParams.map((p) => buildParameterModel(p));
+                const groups = groupParameters(params);
                 operations.push({
                     id: opId,
                     name: opId,
                     xmlTag: op.xmlTag || opId,
                     displayName: toDisplayLabel(opId),
                     iconId: `${prefix}-${opId}`,
-                    groups: groupParameters(params),
-                    parameters: params,
+                    groups,
+                    parameters: groups.flatMap((g) => g.parameters),
                 });
             }
         }
@@ -531,14 +825,15 @@ class ExtensionModelReader {
                     });
                 }
                 const params = rawParams.map((p) => buildParameterModel(p));
+                const groups = groupParameters(params);
                 sources.push({
                     id: srcId,
                     name: srcId,
                     xmlTag: src.xmlTag || srcId,
                     displayName: toDisplayLabel(srcId),
                     iconId: `${prefix}-${srcId}`,
-                    groups: groupParameters(params),
-                    parameters: params,
+                    groups,
+                    parameters: groups.flatMap((g) => g.parameters),
                 });
             }
         }
@@ -600,12 +895,13 @@ class ExtensionModelReader {
                     group: p['@_tab'] || p['@_group'],
                 });
             });
+            const connGroups = groupParameters(params);
             connections.push({
                 id: cId,
                 name: cId,
                 displayName: toDisplayLabel(cId),
-                groups: groupParameters(params),
-                parameters: params,
+                groups: connGroups,
+                parameters: connGroups.flatMap((g) => g.parameters),
             });
         }
         // 2. Collect Configs
@@ -648,13 +944,14 @@ class ExtensionModelReader {
                     }
                 }
             }
+            const configGroups = groupParameters(params);
             configurations.push({
                 id: cfgId,
                 name: cfgId,
                 displayName: toDisplayLabel(cfgId),
                 description: cfgDesc,
-                groups: groupParameters(params),
-                parameters: params,
+                groups: configGroups,
+                parameters: configGroups.flatMap((g) => g.parameters),
                 connectionProvider: providersToAttach[0],
                 connectionProviders: providersToAttach,
             });
@@ -688,14 +985,15 @@ class ExtensionModelReader {
                     group: 'General',
                 }));
             }
+            const opGroups = groupParameters(params);
             operations.push({
                 id: opId,
                 name: opId,
                 xmlTag: opId,
                 displayName: toDisplayLabel(opId),
                 iconId: `${prefix}-${opId}`,
-                groups: groupParameters(params),
-                parameters: params,
+                groups: opGroups,
+                parameters: opGroups.flatMap((g) => g.parameters),
             });
         }
         // 4. Collect Sources
@@ -727,14 +1025,15 @@ class ExtensionModelReader {
                     group: 'General',
                 }));
             }
+            const srcGroups = groupParameters(params);
             sources.push({
                 id: srcId,
                 name: srcId,
                 xmlTag: srcId,
                 displayName: toDisplayLabel(srcId),
                 iconId: `${prefix}-${srcId}`,
-                groups: groupParameters(params),
-                parameters: params,
+                groups: srcGroups,
+                parameters: srcGroups.flatMap((g) => g.parameters),
             });
         }
         return {
@@ -760,11 +1059,19 @@ class ExtensionModelReader {
         for (const item of list) {
             if (!item || typeof item !== 'object')
                 continue;
-            if (Array.isArray(item.parameters)) {
-                const groupName = item.name || item.group || item.tab || 'General';
-                for (const sub of item.parameters) {
+            const subList = item.parameters || item.parameterModels;
+            if (Array.isArray(subList)) {
+                const itemTab = item.layoutModel?.tabName || item.tabName || item.tab;
+                const groupName = itemTab || item.name || item.group || 'General';
+                for (const sub of subList) {
                     if (sub && typeof sub === 'object') {
-                        result.push({ ...sub, group: groupName });
+                        const subTab = sub.layoutModel?.tabName || sub.tabName || sub.tab || itemTab;
+                        result.push({
+                            ...sub,
+                            tabName: subTab,
+                            layoutModel: sub.layoutModel || (subTab ? { tabName: subTab } : undefined),
+                            group: subTab || groupName,
+                        });
                     }
                 }
                 continue;
@@ -823,13 +1130,14 @@ class ExtensionModelReader {
             const lowerSubGroup = subGroup.toLowerCase();
             if (lowerName.endsWith('-config') || lowerName.endsWith('config') || lowerName.includes('configuration')) {
                 const connectionProviders = this.extractConnectionProvidersFromXsd(resolvedCt, complexTypeMap);
+                const configGroups = groupParameters(params);
                 configurations.push({
                     id: elName,
                     name: elName,
                     displayName: toDisplayLabel(elName),
                     description: el['xsd:annotation']?.['xsd:documentation'] || el['xs:annotation']?.['xs:documentation'],
-                    groups: groupParameters(params),
-                    parameters: params,
+                    groups: configGroups,
+                    parameters: configGroups.flatMap((g) => g.parameters),
                     connectionProvider: connectionProviders[0],
                     connectionProviders,
                 });
@@ -839,27 +1147,29 @@ class ExtensionModelReader {
                 lowerName.includes('source') ||
                 lowerName.includes('inbound') ||
                 lowerName.includes('trigger')) {
+                const srcGroups = groupParameters(params);
                 sources.push({
                     id: elName,
                     name: elName,
                     xmlTag: elName,
                     displayName: toDisplayLabel(elName),
                     iconId: `${prefix}-${elName}`,
-                    groups: groupParameters(params),
-                    parameters: params,
+                    groups: srcGroups,
+                    parameters: srcGroups.flatMap((g) => g.parameters),
                 });
             }
             else if (lowerSubGroup.includes('abstract-message-processor') ||
                 lowerSubGroup.includes('abstract-extension-operation') ||
                 (!lowerName.startsWith('abstract-') && !lowerName.includes('connection'))) {
+                const opGroups = groupParameters(params);
                 operations.push({
                     id: elName,
                     name: elName,
                     xmlTag: elName,
                     displayName: toDisplayLabel(elName),
                     iconId: `${prefix}-${elName}`,
-                    groups: groupParameters(params),
-                    parameters: params,
+                    groups: opGroups,
+                    parameters: opGroups.flatMap((g) => g.parameters),
                 });
             }
         }

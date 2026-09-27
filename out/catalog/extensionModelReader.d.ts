@@ -105,7 +105,9 @@ export type ExtensionModelConnectionProvider = ConnectionProviderModel;
  */
 export declare function toDisplayLabel(name: string): string;
 /**
- * Assigns parameters to either "General" or "Advanced" based on hints, retry policies, streaming, and tuning settings.
+ * Assigns parameters to their respective tabs/groups based on explicit tab metadata,
+ * structural complex sections (TLS, Reconnection, Streaming, Pooling, Transactions, Error Mapping),
+ * or categorizes low-level tuning into "Advanced" and regular parameters into "General".
  */
 export declare function inferParameterGroup(name: string, description?: string, explicitGroup?: string): string;
 /**
@@ -113,16 +115,38 @@ export declare function inferParameterGroup(name: string, description?: string, 
  */
 export declare function buildParameterModel(raw: {
     name: string;
+    label?: string;
     description?: string;
-    type?: string;
+    type?: string | any;
     required?: boolean;
     defaultValue?: any;
     group?: string;
+    tab?: string;
+    tabName?: string;
+    layoutModel?: {
+        tabName?: string;
+        order?: number;
+        password?: boolean;
+        text?: boolean;
+        query?: boolean;
+    };
+    displayModel?: {
+        displayName?: string;
+        summary?: string;
+        example?: string;
+    };
     use?: string;
     allowedValues?: string[];
 }): ParameterModel;
 /**
- * Groups parameters into named tabs/groups (General first, Advanced second, then custom).
+ * Extracts nested parameter forms for structural complex objects (TLS, Reconnection, Pooling, Streaming)
+ * so they render as rich, dedicated forms in their own tabs.
+ */
+export declare function expandStructuralSections(params: ParameterModel[]): ParameterModel[];
+/**
+ * Groups parameters into named tabs/groups.
+ * General is always first, Advanced is always second, followed by all other real tabs
+ * in whatever order the model itself declares them.
  */
 export declare function groupParameters(params: ParameterModel[]): ParameterGroupModel[];
 export declare class ExtensionModelReader {

@@ -256,7 +256,7 @@ export class FlowVisualizerPanel {
         break;
 
       case 'revealXml':
-        this.revealXmlRange(msg.range);
+        this.revealXmlRange(msg.range, msg.focusEditor);
         break;
 
       case 'toggleCollapse':
@@ -963,14 +963,14 @@ export class FlowVisualizerPanel {
     return null;
   }
 
-  private async revealXmlRange(range: SourceRange): Promise<void> {
+  private async revealXmlRange(range: SourceRange, focusEditor?: boolean): Promise<void> {
     if (!this.currentDocUri) return;
 
     this.isSyncingFromWebview = true;
     try {
       const editor = await vscode.window.showTextDocument(this.currentDocUri, {
         viewColumn: vscode.ViewColumn.One,
-        preserveFocus: false,
+        preserveFocus: !focusEditor,
       });
 
       const vsRange = new vscode.Range(
