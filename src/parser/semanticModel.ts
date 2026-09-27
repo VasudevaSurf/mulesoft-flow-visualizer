@@ -225,15 +225,20 @@ export class SemanticModelBuilder {
     const label = `${prefix} (${typeAttr})`;
 
     const chain: Node[] = [];
+    const consumed = new Set<RawElement>();
     for (let i = 0; i < el.children.length; i++) {
+      consumed.add(el.children[i]);
       chain.push(this.buildNode(el.children[i], flowName, `${path}/chain[${i}]`, unresolvedNs));
     }
+
+    const body = (el.children || []).filter((c) => !consumed.has(c));
 
     return {
       id: generateNodeId(el.attributes, flowName, path),
       label,
       kind,
       chain,
+      body,
       range: el.range,
     };
   }
@@ -252,6 +257,7 @@ export class SemanticModelBuilder {
 
     const chain: Node[] = [];
     const routes: Route[] = [];
+    const consumedChildren = new Set<RawElement>();
 
     // Special cases:
     // 1. flow-ref is a leaf tile
@@ -266,6 +272,8 @@ export class SemanticModelBuilder {
         range: el.range,
         chain: [],
         routes: [],
+        body: el.children ? [...el.children] : [],
+        text: el.text,
         collapsed: false,
         diagnostics: [],
       };
@@ -280,12 +288,15 @@ export class SemanticModelBuilder {
 
         for (const child of el.children) {
           if (child.localName === 'when') {
+            consumedChildren.add(child);
             const expr = child.attributes['expression'] || '';
             const cleanedExpr = expr.startsWith('#[') && expr.endsWith(']') ? expr.slice(2, -1).trim() : expr;
             const truncated = cleanedExpr.length > 25 ? cleanedExpr.slice(0, 22) + '...' : cleanedExpr;
             const routeLabel = cleanedExpr ? `when #[${truncated}]` : 'when';
             const routeChain: Node[] = [];
+            const whenConsumed = new Set<RawElement>();
             for (let c = 0; c < child.children.length; c++) {
+              whenConsumed.add(child.children[c]);
               routeChain.push(this.buildNode(child.children[c], flowName, `${path}/when[${whenIdx}]/chain[${c}]`, unresolvedNs));
             }
             routes.push({
@@ -293,10 +304,12 @@ export class SemanticModelBuilder {
               label: routeLabel,
               kind: 'when',
               chain: routeChain,
+              body: (child.children || []).filter((c) => !whenConsumed.has(c)),
               range: child.range,
             });
             whenIdx++;
           } else if (child.localName === 'otherwise') {
+            consumedChildren.add(child);
             otherwiseEl = child;
           }
         }
@@ -304,7 +317,9 @@ export class SemanticModelBuilder {
         // otherwise is always rendered last
         if (otherwiseEl) {
           const routeChain: Node[] = [];
+          const otherwiseConsumed = new Set<RawElement>();
           for (let c = 0; c < otherwiseEl.children.length; c++) {
+            otherwiseConsumed.add(otherwiseEl.children[c]);
             routeChain.push(this.buildNode(otherwiseEl.children[c], flowName, `${path}/otherwise/chain[${c}]`, unresolvedNs));
           }
           routes.push({
@@ -312,6 +327,7 @@ export class SemanticModelBuilder {
             label: 'otherwise',
             kind: 'otherwise',
             chain: routeChain,
+            body: (otherwiseEl.children || []).filter((c) => !otherwiseConsumed.has(c)),
             range: otherwiseEl.range,
           });
         }
@@ -319,10 +335,13 @@ export class SemanticModelBuilder {
         // scatter-gather / round-robin / first-successful / custom routers
         for (let r = 0; r < el.children.length; r++) {
           const child = el.children[r];
+          consumedChildren.add(child);
           const routeChain: Node[] = [];
+          const routeConsumed = new Set<RawElement>();
           // child can be <route> or direct processors if wrapper is omitted
           if (child.localName === 'route' || child.localName === 'step') {
             for (let c = 0; c < child.children.length; c++) {
+              routeConsumed.add(child.children[c]);
               routeChain.push(this.buildNode(child.children[c], flowName, `${path}/route[${r}]/chain[${c}]`, unresolvedNs));
             }
           } else {
@@ -333,6 +352,7 @@ export class SemanticModelBuilder {
             label: `Route ${r + 1}`,
             kind: 'route',
             chain: routeChain,
+            body: (child.children || []).filter((c) => !routeConsumed.has(c)),
             range: child.range,
           });
         }
@@ -342,6 +362,7 @@ export class SemanticModelBuilder {
       for (let c = 0; c < el.children.length; c++) {
         const child = el.children[c];
         if (child.localName === 'error-handler') {
+          consumedChildren.add(child);
           // If a try block has an inner error-handler
           for (let ehIdx = 0; ehIdx < child.children.length; ehIdx++) {
             const ehChild = child.children[ehIdx];
@@ -351,10 +372,13 @@ export class SemanticModelBuilder {
             }
           }
         } else {
+          consumedChildren.add(child);
           chain.push(this.buildNode(child, flowName, `${path}/chain[${c}]`, unresolvedNs));
         }
       }
     }
+
+    const body = (el.children || []).filter((c) => !consumedChildren.has(c));
 
     return {
       id,
@@ -365,6 +389,8 @@ export class SemanticModelBuilder {
       range: el.range,
       chain,
       routes,
+      body,
+      text: el.text,
       collapsed: false,
       diagnostics: [],
     };

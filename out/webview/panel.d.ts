@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Node } from '../parser/types';
 export declare class FlowVisualizerPanel {
     static currentPanel: FlowVisualizerPanel | undefined;
     private static readonly viewType;
@@ -20,6 +21,18 @@ export declare class FlowVisualizerPanel {
     private handleShowProperties;
     private handleCreateConfiguration;
     private handleUpdateConfigRef;
+    /**
+     * Generic reader that walks a component's Node.body structure to extract
+     * payload script, target variables, and child element values without regex re-scraping.
+     */
+    static extractComponentBody(node?: Node | null): {
+        primaryScript?: string;
+        variables: Array<{
+            name: string;
+            script: string;
+        }>;
+        childValues: Record<string, string>;
+    };
     private static escapeXml;
     private handleUpdateParameterValue;
     private handleTransformScriptUpdate;

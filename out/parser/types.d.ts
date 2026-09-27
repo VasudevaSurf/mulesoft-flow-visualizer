@@ -53,6 +53,10 @@ export interface Node {
     chain: Node[];
     /** Route lanes. Non-empty only for routers and error handlers. */
     routes: Route[];
+    /** Real nested XML child elements not represented as flow-processing chain or route entries. */
+    body?: RawElement[];
+    /** Direct text or CDATA content of this element if leaf-with-text. */
+    text?: string | null;
     collapsed: boolean;
     diagnostics: ModelDiagnostic[];
 }
@@ -61,6 +65,8 @@ export interface Route {
     label: string;
     kind: 'when' | 'otherwise' | 'route' | 'on-error-propagate' | 'on-error-continue';
     chain: Node[];
+    /** Real nested XML child elements not represented as flow-processing chain entries. */
+    body?: RawElement[];
     range: SourceRange;
 }
 export interface FlowModel {

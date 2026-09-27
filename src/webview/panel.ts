@@ -12,7 +12,7 @@ import { MavenRepo } from '../workspace/mavenRepo';
 import { ConnectionTester } from '../workspace/connectionTester';
 import { WebviewHtmlBuilder } from './html';
 import { HostToWebviewMessage, WebviewToHostMessage } from './messages';
-import { SourceRange, SemanticModel, Node, FlowModel } from '../parser/types';
+import { SourceRange, SemanticModel, Node, FlowModel, RawElement } from '../parser/types';
 import { PositionedScene } from '../layout/types';
 import {
   toDisplayLabel,
@@ -333,45 +333,18 @@ export class FlowVisualizerPanel {
       const targetVariables: Array<{ name: string; script: string }> = [];
       let outputType = 'application/json';
 
-      if (this.currentDocUri && this.lastModel) {
-        const node = this.findNodeInModel(this.lastModel, msg.nodeId);
-        if (node) {
-          const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
-          const nodeStartPos = new vscode.Position(node.range.startLine, node.range.startCol);
-          const nodeEndPos = new vscode.Position(node.range.endLine, node.range.endCol);
-          const nodeText = curDoc.getText(new vscode.Range(nodeStartPos, nodeEndPos));
-
-          // 1. Extract payload script
-          const payloadMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/);
-          if (payloadMatch) {
-            const rawInner = payloadMatch[2];
-            const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
-            payloadScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
-          } else {
-            const cdataMatch = nodeText.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
-            if (cdataMatch) {
-              payloadScript = cdataMatch[1];
-            }
-          }
-
-          // 2. Extract target variables
-          const varRegex = /<([a-zA-Z0-9_-]+:)?set-variable\b([^>]*)>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-variable>/g;
-          let vMatch: RegExpExecArray | null;
-          while ((vMatch = varRegex.exec(nodeText)) !== null) {
-            const attrStr = vMatch[2];
-            const nameMatch = attrStr.match(/variableName="([^"]+)"/) || attrStr.match(/name="([^"]+)"/);
-            const varName = nameMatch ? nameMatch[1] : 'variable';
-            const rawInner = vMatch[3];
-            const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
-            const varScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
-            targetVariables.push({ name: varName, script: varScript });
-          }
-
-          // 3. Extract outputType from payloadScript
-          const outMatch = payloadScript.match(/output\s+([a-zA-Z0-9_\-\/]+)/);
-          if (outMatch) {
-            outputType = outMatch[1];
-          }
+      const node = this.lastModel ? this.findNodeInModel(this.lastModel, msg.nodeId) : null;
+      if (node) {
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(node);
+        if (bodyContent.primaryScript) {
+          payloadScript = bodyContent.primaryScript;
+        }
+        if (bodyContent.variables && bodyContent.variables.length > 0) {
+          targetVariables.push(...bodyContent.variables);
+        }
+        const outMatch = payloadScript.match(/output\s+([a-zA-Z0-9_\-\/]+)/);
+        if (outMatch) {
+          outputType = outMatch[1];
         }
       }
 
@@ -580,6 +553,13 @@ export class FlowVisualizerPanel {
     let iconId: string | undefined;
     let groups: ParameterGroupModel[] = [];
 
+    const targetNode = this.lastModel ? this.findNodeInModel(this.lastModel, msg.nodeId) : null;
+    const bodyContent = FlowVisualizerPanel.extractComponentBody(targetNode);
+    const combinedAttributes: Record<string, any> = {
+      ...bodyContent.childValues,
+      ...msg.attributes,
+    };
+
     if (componentModel) {
       displayName = componentModel.displayName;
       iconId = componentModel.iconId;
@@ -588,7 +568,7 @@ export class FlowVisualizerPanel {
       groups = componentModel.groups.map((group) => ({
         name: group.name,
         parameters: group.parameters.map((p) => {
-          const actualVal = msg.attributes[p.name];
+          const actualVal = combinedAttributes[p.name];
           const isConfigRef = p.isReference && p.referenceType === 'configuration';
           let opts: string[] | undefined;
           if (isConfigRef) {
@@ -610,7 +590,7 @@ export class FlowVisualizerPanel {
       // Also append any extra attributes present in XML that weren't declared in the schema
       const coveredKeys = new Set(groups.flatMap((g) => g.parameters.map((p) => p.name)));
       const extraParams: ParameterModel[] = [];
-      for (const [k, v] of Object.entries(msg.attributes)) {
+      for (const [k, v] of Object.entries(combinedAttributes)) {
         if (!coveredKeys.has(k) && k !== 'doc:id') {
           extraParams.push({
             ...buildParameterModel({ name: k, defaultValue: v, required: false, group: 'General' }),
@@ -629,7 +609,7 @@ export class FlowVisualizerPanel {
     } else {
       // Fallback for core components or unknown elements
       displayName = toDisplayLabel(msg.localName);
-      const params: ParameterModel[] = Object.entries(msg.attributes).map(([k, v]) => {
+      const params: ParameterModel[] = Object.entries(combinedAttributes).map(([k, v]) => {
         const isConfigRef =
           k === 'config-ref' ||
           k.toLowerCase().endsWith('configref') ||
@@ -662,7 +642,7 @@ export class FlowVisualizerPanel {
       displayName,
       iconId,
       groups,
-      currentValues: msg.attributes,
+      currentValues: combinedAttributes,
       autocompleteContext,
     });
   }
@@ -793,6 +773,80 @@ export class FlowVisualizerPanel {
 
     await vscode.workspace.applyEdit(workspaceEdit);
     await curDoc.save();
+  }
+
+  /**
+   * Generic reader that walks a component's Node.body structure to extract
+   * payload script, target variables, and child element values without regex re-scraping.
+   */
+  public static extractComponentBody(node?: Node | null): {
+    primaryScript?: string;
+    variables: Array<{ name: string; script: string }>;
+    childValues: Record<string, string>;
+  } {
+    const result: {
+      primaryScript?: string;
+      variables: Array<{ name: string; script: string }>;
+      childValues: Record<string, string>;
+    } = {
+      variables: [],
+      childValues: {},
+    };
+
+    if (!node) {
+      return result;
+    }
+
+    if (node.text && node.text.trim()) {
+      result.primaryScript = node.text.trim();
+    }
+
+    const traverse = (elements: RawElement[]) => {
+      for (const el of elements) {
+        const local = (el.localName || '').toLowerCase();
+
+        // 1. Target variables: <set-variable variableName="..." ...> or <variable name="..." ...>
+        if (local === 'set-variable' || local === 'variable') {
+          const varName =
+            el.attributes['variableName'] ||
+            el.attributes['name'] ||
+            el.attributes['key'] ||
+            'variable';
+          const script = el.text !== null && el.text !== undefined ? el.text.trim() : '';
+          result.variables.push({ name: varName, script });
+        }
+        // 2. Primary payload script: <set-payload> or <payload>
+        else if (local === 'set-payload' || local === 'payload') {
+          if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
+            result.primaryScript = el.text.trim();
+          }
+        }
+        // 3. Child elements with text/CDATA content
+        else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
+          result.childValues[el.localName] = el.text.trim();
+          if (!result.primaryScript && (local === 'sql' || local === 'body' || local === 'content')) {
+            result.primaryScript = el.text.trim();
+          }
+        }
+
+        // Recurse into nested children (e.g. <ee:message> -> <ee:set-payload>, <ee:variables> -> <ee:set-variable>)
+        if (el.children && el.children.length > 0) {
+          traverse(el.children);
+        }
+      }
+    };
+
+    if (node.body && node.body.length > 0) {
+      traverse(node.body);
+    }
+
+    // Fallback for primaryScript if not explicitly in set-payload / direct text
+    if (!result.primaryScript && Object.keys(result.childValues).length > 0) {
+      const firstKey = Object.keys(result.childValues)[0];
+      result.primaryScript = result.childValues[firstKey];
+    }
+
+    return result;
   }
 
   private static escapeXml(unsafe: string): string {
@@ -1416,20 +1470,13 @@ export class FlowVisualizerPanel {
       }
 
       if (n.descriptor && (n.descriptor.localName === 'transform' || n.descriptor.localName === 'transform-message')) {
-        try {
-          const lines = docText.split('\n');
-          const nodeSlice = lines.slice(n.range.startLine, n.range.endLine + 1).join('\n');
-          const vRegex = /<([a-zA-Z0-9_-]+:)?set-variable\b([^>]*)>/g;
-          let vm: RegExpExecArray | null;
-          while ((vm = vRegex.exec(nodeSlice)) !== null) {
-            const attrStr = vm[2];
-            const nm = attrStr.match(/variableName="([^"]+)"/) || attrStr.match(/name="([^"]+)"/);
-            if (nm && nm[1] && !seenVarNames.has(nm[1])) {
-              seenVarNames.add(nm[1]);
-              variables.push({ name: nm[1] });
-            }
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(n);
+        for (const v of bodyContent.variables) {
+          if (!seenVarNames.has(v.name)) {
+            seenVarNames.add(v.name);
+            variables.push({ name: v.name });
           }
-        } catch {}
+        }
       }
     }
 
@@ -1438,23 +1485,9 @@ export class FlowVisualizerPanel {
     const prevNode = nodesBefore.length > 0 ? nodesBefore[nodesBefore.length - 1] : undefined;
     if (prevNode && prevNode.descriptor && (prevNode.descriptor.localName === 'transform' || prevNode.descriptor.localName === 'transform-message')) {
       try {
-        const lines = docText.split('\n');
-        const prevSlice = lines.slice(prevNode.range.startLine, prevNode.range.endLine + 1).join('\n');
-        let payloadScript = '';
-        const payloadMatch = prevSlice.match(/<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/);
-        if (payloadMatch) {
-          const rawInner = payloadMatch[2];
-          const cdataMatch = rawInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
-          payloadScript = cdataMatch ? cdataMatch[1] : rawInner.trim();
-        } else {
-          const cdataMatch = prevSlice.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
-          if (cdataMatch) {
-            payloadScript = cdataMatch[1];
-          }
-        }
-
-        if (payloadScript) {
-          precedingPayloadShape = this.extractDataWeaveShape(payloadScript);
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(prevNode);
+        if (bodyContent.primaryScript) {
+          precedingPayloadShape = this.extractDataWeaveShape(bodyContent.primaryScript);
         }
       } catch {}
     }
