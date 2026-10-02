@@ -53,11 +53,14 @@ export interface Node {
     chain: Node[];
     /** Route lanes. Non-empty only for routers and error handlers. */
     routes: Route[];
+    /** Optional reference to a global error handler for scopes like Try. */
+    errorHandlerRef?: string | null;
     /** Real nested XML child elements not represented as flow-processing chain or route entries. */
     body?: RawElement[];
     /** Direct text or CDATA content of this element if leaf-with-text. */
     text?: string | null;
     collapsed: boolean;
+    errorBandCollapsed?: boolean;
     diagnostics: ModelDiagnostic[];
 }
 export interface Route {

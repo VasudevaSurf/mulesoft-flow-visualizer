@@ -11,7 +11,7 @@ export class WebviewHtmlBuilder {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'; font-src ${webview.cspSource} data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; style-src ${webview.cspSource} 'unsafe-inline'; worker-src ${webview.cspSource} blob:; script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'; font-src ${webview.cspSource} data:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mule Flow Visualizer</title>
   <style>
@@ -861,7 +861,7 @@ export class WebviewHtmlBuilder {
     }
     .router-route-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border);
@@ -874,25 +874,42 @@ export class WebviewHtmlBuilder {
     .router-route-badge {
       font-size: 10px;
       font-weight: 700;
-      padding: 2px 6px;
+      padding: 3px 6px;
       border-radius: 3px;
       background: rgba(0, 122, 204, 0.2);
       color: var(--accent);
-      min-width: 50px;
+      min-width: 54px;
       text-align: center;
+      margin-top: 4px;
     }
     .router-route-badge.otherwise {
       background: rgba(255, 255, 255, 0.08);
       color: var(--text-muted);
+    }
+    .router-route-monaco-wrapper {
+      flex: 1;
+      height: 72px;
+      min-height: 64px;
     }
     .router-route-expr {
       flex: 1;
       font-family: var(--vscode-editor-font-family, monospace);
       font-size: 11px;
     }
+    .router-route-otherwise-readonly {
+      padding: 8px 10px;
+      color: var(--text-muted);
+      font-style: italic;
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 3px;
+      border: 1px dashed var(--border);
+    }
     .router-route-actions {
       display: flex;
-      gap: 4px;
+      flex-direction: column;
+      gap: 3px;
+      margin-top: 2px;
     }
     .router-action-btn {
       background: transparent;
@@ -1248,24 +1265,64 @@ export class WebviewHtmlBuilder {
   </div>
 
   <script nonce="${nonce}">
+    window.vscode = acquireVsCodeApi();
+    const vscode = window.vscode;
+
+    window.addEventListener('error', function(event) {
+      try {
+        if (window.vscode) {
+          vscode.postMessage({
+            type: 'webviewError',
+            message: event.message || (event.error && event.error.message) || String(event),
+            stack: event.error && event.error.stack,
+            source: event.filename,
+            lineno: event.lineno,
+            colno: event.colno
+          });
+        }
+      } catch (e) {
+        console.error('Failed to report window error:', e);
+      }
+    });
+
+    window.addEventListener('unhandledrejection', function(event) {
+      try {
+        if (window.vscode) {
+          const reason = event.reason;
+          vscode.postMessage({
+            type: 'webviewError',
+            message: (reason && reason.message) || String(reason) || 'Unhandled promise rejection',
+            stack: reason && reason.stack
+          });
+        }
+      } catch (e) {
+        console.error('Failed to report unhandled rejection:', e);
+      }
+    });
+
     window.MonacoEnvironment = {
-      getWorkerUrl: function(workerId, label) {
-        return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
-          'self.MonacoEnvironment = { baseUrl: "' + '${monacoBaseUri}' + '/" };' +
-          'try { importScripts("' + '${monacoBaseUri}' + '/editor/editor.worker.js"); } catch(e){}'
-        );
+      getWorker: function(workerId, label) {
+        try {
+          const workerScript = 'self.MonacoEnvironment = { baseUrl: "' + '${monacoBaseUri}' + '/" };' +
+            'try { importScripts("' + '${monacoBaseUri}' + '/editor/editor.worker.js"); } catch(e) { console.error("Worker importScripts error:", e); }';
+          const blob = new Blob([workerScript], { type: 'application/javascript' });
+          return new Worker(URL.createObjectURL(blob));
+        } catch (err) {
+          console.warn('Monaco getWorker error, falling back:', err);
+          return null;
+        }
       }
     };
   </script>
   <script nonce="${nonce}" src="${monacoLoaderUri}"></script>
 
   <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
     let currentModel = null;
     let currentScene = null;
     let selectedNodeId = null;
 
     let monacoLoaded = false;
+    let monacoLoadError = null;
     const monacoReadyQueue = [];
     const activeMonacoEditors = new Map();
 
@@ -1280,14 +1337,34 @@ export class WebviewHtmlBuilder {
           'vs': '${monacoBaseUri}'
         }
       });
-      require(['vs/editor/editor.main'], function() {
-        registerDataWeaveLanguage();
-        monacoLoaded = true;
-        while (monacoReadyQueue.length > 0) {
-          const fn = monacoReadyQueue.shift();
-          try { fn(); } catch(e) { console.error('Error executing monaco callback', e); }
+      require(
+        ['vs/editor/editor.main'],
+        function() {
+          try {
+            registerDataWeaveLanguage();
+          } catch (e) {
+            console.error('Failed to register DataWeave language:', e);
+          }
+          monacoLoaded = true;
+          while (monacoReadyQueue.length > 0) {
+            const fn = monacoReadyQueue.shift();
+            try { fn(); } catch(e) { console.error('Error executing monaco callback', e); }
+          }
+        },
+        function(err) {
+          console.error('Editor failed to load:', err);
+          monacoLoadError = err;
+          const errMsg = (err && err.message) || String(err);
+          const editorHosts = document.querySelectorAll('.dw-monaco-editor, .dw-main-editor-wrapper');
+          editorHosts.forEach(function(el) {
+            el.innerHTML = '<div style="padding: 16px; color: #e53935; font-family: monospace;">Editor failed to load: ' + escapeHtml(errMsg) + '</div>';
+          });
+          while (monacoReadyQueue.length > 0) {
+            const fn = monacoReadyQueue.shift();
+            try { fn(err); } catch(e) { console.error('Error executing monaco callback', e); }
+          }
         }
-      });
+      );
     }
 
     function getMonacoTheme() {
@@ -1650,7 +1727,7 @@ export class WebviewHtmlBuilder {
       scene.flows.forEach((flow, idx) => {
         const li = document.createElement('li');
         li.className = 'flow-item';
-        li.innerHTML = '<span class="flow-item-icon">' + (flow.flowModel.type === 'sub-flow' ? '⚡' : '⮞') + '</span> ' + escapeHtml(flow.flowModel.name);
+        li.innerHTML = '<span class="flow-item-icon">' + (flow.flowModel.type === 'global-error-handler' ? '🛡️' : (flow.flowModel.type === 'sub-flow' ? '⚡' : '⮞')) + '</span> ' + escapeHtml(flow.flowModel.name);
         li.onclick = () => {
           document.querySelectorAll('.flow-item').forEach(i => i.classList.remove('active'));
           li.classList.add('active');
@@ -1714,11 +1791,16 @@ export class WebviewHtmlBuilder {
 
           if (flowRefTarget) {
             // Scroll to local flow target if present
-            const targetFlow = scene.flows.find(f => f.flowModel.name === flowRefTarget);
+            const targetFlow = scene.flows.find(f => f.flowModel.name === flowRefTarget || f.flowModel.id === flowRefTarget);
             if (targetFlow) {
               panX = 40;
               panY = 40 - targetFlow.y * scale;
               updateTransform();
+              const targetHeader = document.querySelector('#flow-' + targetFlow.flowId);
+              if (targetHeader) {
+                targetHeader.classList.add('flash-highlight');
+                setTimeout(() => targetHeader.classList.remove('flash-highlight'), 1500);
+              }
             } else {
               vscode.postMessage({ type: 'navigateFlowRef', flowName: flowRefTarget });
             }
@@ -1811,6 +1893,7 @@ export class WebviewHtmlBuilder {
 
     function renderFlow(flow) {
       const isSubFlow = flow.flowModel.type === 'sub-flow';
+      const isGlobalEH = flow.flowModel.type === 'global-error-handler';
       const isCollapsed = flow.flowModel.collapsed;
       const chevron = isCollapsed ? '▶' : '▼';
       const processorCount = flow.flowModel.chain.length + (flow.flowModel.source ? 1 : 0);
@@ -1832,7 +1915,7 @@ export class WebviewHtmlBuilder {
           <text class="flow-title" x="\${flow.x + 38}" y="\${flow.y + 16}">\${escapeHtml(flow.flowModel.name)}</text>
           \${isCollapsed 
             ? \`<text class="flow-collapsed-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${processorCount} processors (minimized - click to expand)</text>\`
-            : \`<text class="flow-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${isSubFlow ? 'SUB-FLOW' : 'FLOW'}</text>\`
+            : \`<text class="flow-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${isGlobalEH ? 'GLOBAL ERROR HANDLER' : (isSubFlow ? 'SUB-FLOW' : 'FLOW')}</text>\`
           }
         </g>
       \`;
@@ -1876,8 +1959,11 @@ export class WebviewHtmlBuilder {
       if (flow.errorBandBox) {
         const isErrCollapsed = flow.errorCollapsed ?? false;
         const errChevron = isErrCollapsed ? '▶' : '▼';
-        const errCount = flow.flowModel.errorHandler.length;
-        const errBandId = \`\${flow.flowId}:errorBand\`;
+        const errCount = flow.flowModel.errorHandler.length || (flow.flowModel.errorHandlerRef ? 1 : 0);
+        const errBandId = flow.flowId + ':errorBand';
+        const countLabel = flow.flowModel.errorHandler.length > 0
+          ? (errCount + ' handler' + (errCount === 1 ? '' : 's'))
+          : ('ref: ' + flow.flowModel.errorHandlerRef);
 
         html += \`
           <rect class="error-band-rect" x="\${flow.errorBandBox.x}" y="\${flow.errorBandBox.y}" width="\${flow.errorBandBox.width}" height="\${flow.errorBandBox.height}" />
@@ -1892,8 +1978,8 @@ export class WebviewHtmlBuilder {
 
             <text class="error-band-title" x="\${flow.errorBandBox.x + 34}" y="\${flow.errorBandBox.y + 15}">Error Handling</text>
             \${isErrCollapsed 
-              ? \`<text class="error-band-collapsed-badge" x="\${flow.errorBandBox.x + flow.errorBandBox.width - 12}" y="\${flow.errorBandBox.y + 15}" text-anchor="end">\${errCount} handler\${errCount === 1 ? '' : 's'} (minimized - click to expand)</text>\`
-              : \`<text class="error-band-badge" x="\${flow.errorBandBox.x + flow.errorBandBox.width - 12}" y="\${flow.errorBandBox.y + 15}" text-anchor="end">\${errCount} handler\${errCount === 1 ? '' : 's'}</text>\`
+              ? \`<text class="error-band-collapsed-badge" x="\${flow.errorBandBox.x + flow.errorBandBox.width - 12}" y="\${flow.errorBandBox.y + 15}" text-anchor="end">\${countLabel} (minimized - click to expand)</text>\`
+              : \`<text class="error-band-badge" x="\${flow.errorBandBox.x + flow.errorBandBox.width - 12}" y="\${flow.errorBandBox.y + 15}" text-anchor="end">\${countLabel}</text>\`
             }
           </g>
         \`;
@@ -1904,9 +1990,10 @@ export class WebviewHtmlBuilder {
             const refX = flow.errorBandBox.x + 12;
             const refW = Math.min(260, flow.errorBandBox.width - 24);
             html += \`
-              <g class="tile-group" data-node-id="\${escapeHtml(flow.flowId + ':errorHandlerRef')}" style="cursor: pointer;" title="Global Error Handler Reference">
+              <g class="tile-group" data-node-id="\${escapeHtml(flow.flowId + ':errorHandlerRef')}" data-flow-ref="\${escapeHtml(flow.flowModel.errorHandlerRef)}" style="cursor: pointer;" title="Global Error Handler Reference: \${escapeHtml(flow.flowModel.errorHandlerRef)}">
                 <rect class="tile-rect" x="\${refX}" y="\${refY}" width="\${refW}" height="30" rx="4" fill="rgba(229,57,53,0.08)" stroke="rgba(229,57,53,0.3)" stroke-dasharray="4 2" />
                 <text class="tile-title" x="\${refX + 10}" y="\${refY + 19}" font-size="11" fill="var(--fg-dim)">Reference: <tspan fill="var(--accent)" font-weight="600">\${escapeHtml(flow.flowModel.errorHandlerRef)}</tspan></text>
+                <text x="\${refX + refW - 16}" y="\${refY + 19}" font-size="11" fill="var(--accent)">↗</text>
               </g>
             \`;
           }
@@ -1959,7 +2046,7 @@ export class WebviewHtmlBuilder {
       }
 
       // 2. Expanded Scope or Router Container
-      if (pNode.children.length > 0 || pNode.routes.length > 0) {
+      if (pNode.children.length > 0 || pNode.routes.length > 0 || pNode.errorBandBox) {
         html += \`
           <rect class="container-box" x="\${pNode.x}" y="\${pNode.y}" width="\${pNode.width}" height="\${pNode.height}" />
 
@@ -1994,8 +2081,60 @@ export class WebviewHtmlBuilder {
           }
         }
 
+        // Scope Error Handling Band (e.g. Try scope with error-handler)
+        if (pNode.errorBandBox) {
+          const isErrCollapsed = pNode.errorCollapsed ?? false;
+          const errChevron = isErrCollapsed ? '▶' : '▼';
+          const errCount = (pNode.errorHandlers && pNode.errorHandlers.length) || (pNode.routes && pNode.routes.length) || (pNode.node.errorHandlerRef ? 1 : 0);
+          const errBandId = pNode.nodeId + ':errorBand';
+          const countLabel = ((pNode.routes && pNode.routes.length > 0) || (pNode.errorHandlers && pNode.errorHandlers.length > 0))
+            ? (errCount + ' handler' + (errCount === 1 ? '' : 's'))
+            : ('ref: ' + pNode.node.errorHandlerRef);
+
+          html += \`
+            <rect class="error-band-rect" x="\${pNode.errorBandBox.x}" y="\${pNode.errorBandBox.y}" width="\${pNode.errorBandBox.width}" height="\${pNode.errorBandBox.height}" />
+
+            <!-- Header Strip with Dropdown Chevron Button -->
+            <g class="error-band-toggle" data-node-id="\${errBandId}" style="cursor: pointer;" title="\${isErrCollapsed ? 'Click to expand error handling' : 'Click to minimize error handling'}">
+              <rect class="error-band-header-rect" x="\${pNode.errorBandBox.x}" y="\${pNode.errorBandBox.y}" width="\${pNode.errorBandBox.width}" height="28" rx="6" fill="rgba(229,57,53,0.06)" />
+
+              <!-- Dropdown Chevron Button -->
+              <rect class="error-band-chevron-bg" x="\${pNode.errorBandBox.x + 8}" y="\${pNode.errorBandBox.y + 5}" width="18" height="18" rx="3" fill="rgba(229,57,53,0.15)" />
+              <text class="error-band-chevron-text" x="\${pNode.errorBandBox.x + 17}" y="\${pNode.errorBandBox.y + 15}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#e53935">\${errChevron}</text>
+
+              <text class="error-band-title" x="\${pNode.errorBandBox.x + 34}" y="\${pNode.errorBandBox.y + 15}">Error Handling</text>
+              \${isErrCollapsed 
+                ? \`<text class="error-band-collapsed-badge" x="\${pNode.errorBandBox.x + pNode.errorBandBox.width - 12}" y="\${pNode.errorBandBox.y + 15}" text-anchor="end">\${countLabel} (minimized - click to expand)</text>\`
+                : \`<text class="error-band-badge" x="\${pNode.errorBandBox.x + pNode.errorBandBox.width - 12}" y="\${pNode.errorBandBox.y + 15}" text-anchor="end">\${countLabel}</text>\`
+              }
+            </g>
+          \`;
+
+          if (!isErrCollapsed) {
+            if (pNode.node.errorHandlerRef) {
+              const refY = pNode.errorBandBox.y + 34;
+              const refX = pNode.errorBandBox.x + 12;
+              const refW = Math.min(260, pNode.errorBandBox.width - 24);
+              html += \`
+                <g class="tile-group" data-node-id="\${escapeHtml(pNode.nodeId + ':errorHandlerRef')}" data-flow-ref="\${escapeHtml(pNode.node.errorHandlerRef)}" style="cursor: pointer;" title="Global Error Handler Reference: \${escapeHtml(pNode.node.errorHandlerRef)}">
+                  <rect class="tile-rect" x="\${refX}" y="\${refY}" width="\${refW}" height="30" rx="4" fill="rgba(229,57,53,0.08)" stroke="rgba(229,57,53,0.3)" stroke-dasharray="4 2" />
+                  <text class="tile-title" x="\${refX + 10}" y="\${refY + 19}" font-size="11" fill="var(--fg-dim)">Reference: <tspan fill="var(--accent)" font-weight="600">\${escapeHtml(pNode.node.errorHandlerRef)}</tspan></text>
+                  <text x="\${refX + refW - 16}" y="\${refY + 19}" font-size="11" fill="var(--accent)">↗</text>
+                </g>
+              \`;
+            }
+
+            const handlersToRender = (pNode.errorHandlers && pNode.errorHandlers.length > 0) ? pNode.errorHandlers : pNode.routes;
+            if (handlersToRender && handlersToRender.length > 0) {
+              for (const ehRoute of handlersToRender) {
+                html += renderRoute(ehRoute, false);
+              }
+            }
+          }
+        }
+
         // Routers: vertical spine bracket and routes
-        if (pNode.routes.length > 0) {
+        if (!pNode.errorBandBox && pNode.routes.length > 0) {
           const spineX = pNode.x + 20;
           const firstLaneY = pNode.routes[0].laneY;
           const lastLaneY = pNode.routes[pNode.routes.length - 1].laneY;
@@ -2228,6 +2367,45 @@ export class WebviewHtmlBuilder {
 
       let mainEditor = null;
       let isProgrammaticChange = false;
+      let fallbackTextarea = null;
+
+      // Plain textarea fallback if Monaco is not ready after 3 seconds
+      const fallbackTimer = setTimeout(function() {
+        if (!mainEditor && (!window.monaco || !monacoLoaded)) {
+          console.warn('Monaco not ready after 3 seconds, displaying textarea fallback');
+          editorHost.innerHTML = '';
+          fallbackTextarea = document.createElement('textarea');
+          fallbackTextarea.className = 'dw-fallback-textarea';
+          fallbackTextarea.style.width = '100%';
+          fallbackTextarea.style.height = '100%';
+          fallbackTextarea.style.minHeight = '300px';
+          fallbackTextarea.style.resize = 'vertical';
+          fallbackTextarea.style.fontFamily = 'monospace, Consolas, "Courier New"';
+          fallbackTextarea.style.fontSize = '12px';
+          fallbackTextarea.style.lineHeight = '1.5';
+          fallbackTextarea.style.backgroundColor = 'var(--bg, #1e1e1e)';
+          fallbackTextarea.style.color = 'var(--fg, #cccccc)';
+          fallbackTextarea.style.border = '1px solid var(--border, #333333)';
+          fallbackTextarea.style.padding = '8px';
+          fallbackTextarea.style.boxSizing = 'border-box';
+          fallbackTextarea.style.whiteSpace = 'pre';
+          fallbackTextarea.style.tabSize = '2';
+          fallbackTextarea.value = getActiveTarget().script || '';
+
+          let taTimer;
+          fallbackTextarea.addEventListener('input', function() {
+            clearTimeout(taTimer);
+            taTimer = setTimeout(function() {
+              const raw = fallbackTextarea.value;
+              const target = getActiveTarget();
+              target.script = raw;
+              sendParamUpdate(data.nodeId, target.paramName, raw, 'dataweave');
+            }, 400);
+          });
+
+          editorHost.appendChild(fallbackTextarea);
+        }
+      }, 3000);
 
       function getActiveTarget() {
         return targets.find(function(t) { return t.id === activeTargetId; }) || targets[0];
@@ -2308,6 +2486,9 @@ export class WebviewHtmlBuilder {
         if (mainEditor) {
           const curTarget = getActiveTarget();
           curTarget.script = mainEditor.getValue();
+        } else if (fallbackTextarea) {
+          const curTarget = getActiveTarget();
+          curTarget.script = fallbackTextarea.value;
         }
         activeTargetId = newTargetId;
         const target = getActiveTarget();
@@ -2322,6 +2503,8 @@ export class WebviewHtmlBuilder {
             isProgrammaticChange = false;
           }
           mainEditor.layout();
+        } else if (fallbackTextarea) {
+          fallbackTextarea.value = target.script || '';
         }
       }
 
@@ -2355,6 +2538,12 @@ export class WebviewHtmlBuilder {
       };
 
       function createMainTransformEditor() {
+        if (monacoLoadError) {
+          clearTimeout(fallbackTimer);
+          editorHost.innerHTML = '<div style="padding: 16px; color: #e53935; font-family: monospace;">Editor failed to load: ' + escapeHtml(monacoLoadError?.message || String(monacoLoadError)) + '</div>';
+          return;
+        }
+
         if (!window.monaco || !monacoLoaded) {
           monacoReadyQueue.push(createMainTransformEditor);
           return;
@@ -2365,6 +2554,15 @@ export class WebviewHtmlBuilder {
         if (!editorWrapper.isConnected) {
           requestAnimationFrame(createMainTransformEditor);
           return;
+        }
+
+        clearTimeout(fallbackTimer);
+        if (fallbackTextarea) {
+          const curVal = fallbackTextarea.value;
+          const target = getActiveTarget();
+          target.script = curVal;
+          editorHost.innerHTML = '';
+          fallbackTextarea = null;
         }
 
         const initialTarget = getActiveTarget();
@@ -2414,8 +2612,8 @@ export class WebviewHtmlBuilder {
       if (outputSelect) {
         outputSelect.onchange = function() {
           const newType = outputSelect.value;
-          if (mainEditor) {
-            let cur = mainEditor.getValue();
+          if (mainEditor || fallbackTextarea) {
+            let cur = mainEditor ? mainEditor.getValue() : fallbackTextarea.value;
 
             if (/output\\s+[a-zA-Z0-9_\\-\\/]+/.test(cur)) {
               cur = cur.replace(/output\\s+[a-zA-Z0-9_\\-\\/]+/, 'output ' + newType);
@@ -2427,14 +2625,19 @@ export class WebviewHtmlBuilder {
               cur = '%dw 2.0\\noutput ' + newType + '\\n---\\n' + cur;
             }
 
-            isProgrammaticChange = true;
-            try {
-              mainEditor.setValue(cur);
-            } finally {
-              isProgrammaticChange = false;
+            if (mainEditor) {
+              isProgrammaticChange = true;
+              try {
+                mainEditor.setValue(cur);
+              } finally {
+                isProgrammaticChange = false;
+              }
+              mainEditor.focus();
+            } else if (fallbackTextarea) {
+              fallbackTextarea.value = cur;
+              fallbackTextarea.focus();
             }
 
-            mainEditor.focus();
             const target = getActiveTarget();
             target.script = cur;
             sendParamUpdate(data.nodeId, target.paramName, cur, 'dataweave');
@@ -2542,8 +2745,7 @@ export class WebviewHtmlBuilder {
             addWhenBtn.onclick = function() {
               vscode.postMessage({
                 type: 'addChoiceRoute',
-                routerNodeId: data.nodeId,
-                expression: '#[payload != null]'
+                nodeId: data.nodeId
               });
             };
           }
@@ -2551,37 +2753,118 @@ export class WebviewHtmlBuilder {
           const rList = document.createElement('div');
           rList.className = 'router-routes-list';
 
-          const whenRoutes = data.routerRoutes.filter(function(r) { return r.name === 'when'; });
+          const whenRoutes = data.routerRoutes.filter(function(r) {
+            return (r.kind === 'when' || r.name === 'when');
+          });
           const totalWhens = whenRoutes.length;
+          let whenCounter = 0;
 
           data.routerRoutes.forEach(function(r, rIdx) {
+            const isWhen = (r.kind === 'when' || r.name === 'when');
+            const routeId = r.id || r.routeId;
             const row = document.createElement('div');
             row.className = 'router-route-row';
 
             const badge = document.createElement('span');
-            badge.className = 'router-route-badge' + (r.name === 'otherwise' ? ' otherwise' : '');
-            badge.textContent = r.name.toUpperCase();
+            badge.className = 'router-route-badge' + (isWhen ? '' : ' otherwise');
+            badge.textContent = isWhen ? 'WHEN' : 'OTHERWISE';
             row.appendChild(badge);
 
-            if (r.name === 'when') {
-              const exprInp = document.createElement('input');
-              exprInp.type = 'text';
-              exprInp.className = 'prop-input router-route-expr';
-              exprInp.value = r.expression || '';
-              exprInp.placeholder = 'Expression (e.g. #[payload != null])';
+            if (isWhen) {
+              const currentWhenIdx = whenCounter++;
+              const expWrapper = document.createElement('div');
+              expWrapper.className = 'prop-monaco-wrapper prop-monaco-multi router-route-monaco-wrapper';
+              expWrapper.setAttribute('data-route-id', routeId);
 
-              let eTimer;
-              exprInp.oninput = function() {
-                clearTimeout(eTimer);
-                eTimer = setTimeout(function() {
-                  sendParamUpdate(r.routeId, 'expression', exprInp.value, 'dataweave');
+              const monacoHost = document.createElement('div');
+              monacoHost.className = 'prop-monaco-editor';
+              expWrapper.appendChild(monacoHost);
+              row.appendChild(expWrapper);
+
+              let monacoEditorInstance = null;
+              const initVal = r.expression !== undefined && r.expression !== null
+                ? wrapExpression(r.expression)
+                : '#[]';
+
+              // Fallback textarea until Monaco is initialized or if Monaco encounters an error
+              const taFallback = document.createElement('textarea');
+              taFallback.className = 'prop-input router-route-expr-fallback';
+              taFallback.style.width = '100%';
+              taFallback.style.height = '100%';
+              taFallback.style.minHeight = '64px';
+              taFallback.style.resize = 'vertical';
+              taFallback.style.fontFamily = 'var(--vscode-editor-font-family, monospace)';
+              taFallback.style.fontSize = '12px';
+              taFallback.style.border = 'none';
+              taFallback.style.background = 'transparent';
+              taFallback.style.color = 'var(--fg, #cccccc)';
+              taFallback.style.padding = '4px 6px';
+              taFallback.style.boxSizing = 'border-box';
+              taFallback.value = initVal;
+
+              let taTimer;
+              taFallback.oninput = function() {
+                clearTimeout(taTimer);
+                taTimer = setTimeout(function() {
+                  sendParamUpdate(routeId, 'expression', taFallback.value, 'dataweave');
                 }, 400);
               };
-              exprInp.onchange = function() {
-                clearTimeout(eTimer);
-                sendParamUpdate(r.routeId, 'expression', exprInp.value, 'dataweave');
-              };
-              row.appendChild(exprInp);
+              monacoHost.appendChild(taFallback);
+
+              function createWhenEditor() {
+                if (!window.monaco || !monacoLoaded) {
+                  monacoReadyQueue.push(createWhenEditor);
+                  return;
+                }
+                if (monacoEditorInstance) return;
+                if (!expWrapper.isConnected) return;
+
+                const curVal = taFallback ? taFallback.value : initVal;
+                monacoHost.innerHTML = '';
+
+                monacoEditorInstance = monaco.editor.create(monacoHost, {
+                  value: curVal,
+                  language: 'dataweave',
+                  theme: getMonacoTheme(),
+                  automaticLayout: true,
+                  lineNumbers: 'off',
+                  glyphMargin: false,
+                  folding: false,
+                  lineDecorationsWidth: 0,
+                  lineNumbersMinChars: 0,
+                  overviewRulerLanes: 0,
+                  overviewRulerBorder: false,
+                  hideCursorInOverviewRuler: true,
+                  scrollbar: { vertical: 'auto', horizontal: 'auto' },
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  minimap: { enabled: false },
+                  renderLineHighlight: 'none',
+                  contextmenu: false,
+                  fixedOverflowWidgets: true,
+                  tabSize: 2,
+                  fontSize: 12,
+                  lineHeight: 18,
+                  padding: { top: 4, bottom: 4 },
+                  fontFamily: 'var(--vscode-editor-font-family, Consolas, "Courier New", monospace)'
+                });
+
+                let editTimer;
+                monacoEditorInstance.onDidChangeModelContent(function() {
+                  clearTimeout(editTimer);
+                  editTimer = setTimeout(function() {
+                    const rawVal = monacoEditorInstance.getValue();
+                    sendParamUpdate(routeId, 'expression', rawVal, 'dataweave');
+                  }, 400);
+                });
+
+                activeMonacoEditors.set('when::' + routeId, monacoEditorInstance);
+                setTimeout(function() {
+                  if (monacoEditorInstance) monacoEditorInstance.layout();
+                }, 20);
+              }
+
+              createWhenEditor();
 
               const actions = document.createElement('div');
               actions.className = 'router-route-actions';
@@ -2592,16 +2875,17 @@ export class WebviewHtmlBuilder {
               upBtn.className = 'router-action-btn';
               upBtn.textContent = '▲';
               upBtn.title = 'Move branch up';
-              if (rIdx === 0) {
+              if (currentWhenIdx === 0) {
                 upBtn.disabled = true;
                 upBtn.style.opacity = '0.3';
+                upBtn.style.cursor = 'default';
               } else {
                 upBtn.onclick = function() {
                   vscode.postMessage({
                     type: 'reorderChoiceRoutes',
-                    routerNodeId: data.nodeId,
-                    routeIndex: rIdx,
-                    direction: 'up'
+                    nodeId: data.nodeId,
+                    fromIndex: rIdx,
+                    toIndex: rIdx - 1
                   });
                 };
               }
@@ -2613,16 +2897,17 @@ export class WebviewHtmlBuilder {
               downBtn.className = 'router-action-btn';
               downBtn.textContent = '▼';
               downBtn.title = 'Move branch down';
-              if (rIdx >= totalWhens - 1) {
+              if (currentWhenIdx >= totalWhens - 1) {
                 downBtn.disabled = true;
                 downBtn.style.opacity = '0.3';
+                downBtn.style.cursor = 'default';
               } else {
                 downBtn.onclick = function() {
                   vscode.postMessage({
                     type: 'reorderChoiceRoutes',
-                    routerNodeId: data.nodeId,
-                    routeIndex: rIdx,
-                    direction: 'down'
+                    nodeId: data.nodeId,
+                    fromIndex: rIdx,
+                    toIndex: rIdx + 1
                   });
                 };
               }
@@ -2638,8 +2923,7 @@ export class WebviewHtmlBuilder {
                 if (confirm('Delete this When route branch?')) {
                   vscode.postMessage({
                     type: 'deleteRoute',
-                    routerNodeId: data.nodeId,
-                    routeId: r.routeId
+                    routeId: routeId
                   });
                 }
               };
@@ -2647,11 +2931,9 @@ export class WebviewHtmlBuilder {
 
               row.appendChild(actions);
             } else {
-              const defLabel = document.createElement('span');
-              defLabel.className = 'router-route-expr';
-              defLabel.style.color = 'var(--text-muted)';
-              defLabel.style.fontStyle = 'italic';
-              defLabel.textContent = 'Default fallback route';
+              const defLabel = document.createElement('div');
+              defLabel.className = 'router-route-expr router-route-otherwise-readonly';
+              defLabel.textContent = 'Default fallback route (read-only)';
               row.appendChild(defLabel);
             }
 
@@ -3090,6 +3372,9 @@ export class WebviewHtmlBuilder {
       if (fieldExpressionModes[nodeKey] !== undefined) {
         isFx = fieldExpressionModes[nodeKey] === true;
       } else if (typeof val === 'string' && val.trim().startsWith('#[')) {
+        isFx = true;
+        fieldExpressionModes[nodeKey] = true;
+      } else if (param.defaultExpressionMode || param.name === 'when') {
         isFx = true;
         fieldExpressionModes[nodeKey] = true;
       } else {

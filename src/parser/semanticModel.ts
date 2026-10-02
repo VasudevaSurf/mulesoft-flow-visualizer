@@ -24,7 +24,7 @@ export class SemanticModelBuilder {
           flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
         } else if (local === 'sub-flow') {
           flows.push(this.buildFlow(child, 'sub-flow', unresolvedNamespaces));
-        } else if (local === 'error-handler' && (child.attributes['name'] || child.attributes['id'])) {
+        } else if (local === 'error-handler' && (child.attributes['name'] || child.attributes['id'] || child.attributes['doc:name'] || child.attributes['doc:id'])) {
           flows.push(this.buildGlobalErrorHandler(child, unresolvedNamespaces));
         } else if (isMunitNs && local === 'test') {
           // MUnit tests are flow-like constructs with behavior/execution/validation sections
@@ -222,8 +222,8 @@ export class SemanticModelBuilder {
     ehEl: RawElement,
     unresolvedNs: Set<string>
   ): FlowModel {
-    const name = ehEl.attributes['name'] || 'Global Error Handler';
-    const id = ehEl.attributes['doc:id'] || name;
+    const name = ehEl.attributes['name'] || ehEl.attributes['id'] || ehEl.attributes['doc:name'] || 'Global Error Handler';
+    const id = ehEl.attributes['doc:id'] || ehEl.attributes['id'] || name;
     const routes: Route[] = [];
 
     for (let i = 0; i < ehEl.children.length; i++) {
@@ -299,6 +299,7 @@ export class SemanticModelBuilder {
 
     const chain: Node[] = [];
     const routes: Route[] = [];
+    let errorHandlerRef: string | null = el.attributes['errorHandler-ref'] || el.attributes['error-handler-ref'] || null;
     const consumedChildren = new Set<RawElement>();
 
     // Special cases:
@@ -331,7 +332,7 @@ export class SemanticModelBuilder {
         for (const child of el.children) {
           if (child.localName === 'when') {
             consumedChildren.add(child);
-            const expr = child.attributes['expression'] || '';
+            const expr = child.attributes['expression'] || child.attributes['when'] || '';
             const cleanedExpr = expr.startsWith('#[') && expr.endsWith(']') ? expr.slice(2, -1).trim() : expr;
             const truncated = cleanedExpr.length > 25 ? cleanedExpr.slice(0, 22) + '...' : cleanedExpr;
             const routeLabel = cleanedExpr ? `when #[${truncated}]` : 'when';
@@ -408,12 +409,15 @@ export class SemanticModelBuilder {
           });
         }
       }
-    } else if (descriptor.kind === 'scope') {
+    } else if (descriptor.kind === 'scope' || el.localName === 'try') {
       // Scopes: try, foreach, parallel-foreach, until-successful, async, cache, batch:job
       for (let c = 0; c < el.children.length; c++) {
         const child = el.children[c];
         if (child.localName === 'error-handler') {
           consumedChildren.add(child);
+          if (child.attributes['ref']) {
+            errorHandlerRef = child.attributes['ref'];
+          }
           // If a try block has an inner error-handler
           for (let ehIdx = 0; ehIdx < child.children.length; ehIdx++) {
             const ehChild = child.children[ehIdx];
@@ -440,6 +444,7 @@ export class SemanticModelBuilder {
       range: el.range,
       chain,
       routes,
+      errorHandlerRef,
       body,
       text: el.text,
       collapsed: false,

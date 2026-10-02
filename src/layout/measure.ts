@@ -12,6 +12,7 @@ export interface MeasuredNode extends MeasuredBox {
   innerChain?: MeasuredChain;
   innerRoutes?: MeasuredRoute[];
   collapsedBadgeCount?: number;
+  errorCollapsed?: boolean;
 }
 
 export interface MeasuredRoute extends MeasuredBox {
@@ -58,18 +59,72 @@ export class MeasureEngine {
     }
 
     const kind = node.descriptor.kind;
+    const isScope = kind === 'scope' || node.descriptor.localName === 'try';
 
-    // Scope: exactly one nested chain
-    if (kind === 'scope' || (node.chain.length > 0 && node.routes.length === 0)) {
+    // Scope: nested chain with optional error-handler
+    if (isScope) {
       const inner = this.measureChain(node.chain, depth + 1);
+      const measuredRoutes: MeasuredRoute[] = [];
+      let maxErrLaneW = 0;
+      let totalErrH = 0;
+      const isErrCollapsed = node.errorBandCollapsed ?? false;
+
+      if (node.routes.length > 0 && !isErrCollapsed) {
+        for (let i = 0; i < node.routes.length; i++) {
+          const r = node.routes[i];
+          const rInner = this.measureChain(r.chain, depth + 1);
+          const routeH = rInner.h + L.routeLabelH;
+          const routeLabelW = Math.ceil((r.label ? r.label.length * 7.4 : 0) + 24);
+          const routeW = Math.max(rInner.w, routeLabelW);
+
+          if (routeW > maxErrLaneW) {
+            maxErrLaneW = routeW;
+          }
+          totalErrH += routeH;
+          if (i < node.routes.length - 1) {
+            totalErrH += L.routeGapY;
+          }
+
+          measuredRoutes.push({
+            route: r,
+            w: routeW,
+            h: routeH,
+            laneY: L.routeLabelH + rInner.laneY,
+            innerChain: rInner,
+          });
+        }
+      }
+
+      let errBandH = 0;
+      if (node.routes.length > 0 || node.errorHandlerRef) {
+        if (isErrCollapsed) {
+          errBandH = L.errorBandHeaderH;
+        } else if (node.routes.length > 0) {
+          errBandH = L.errorBandHeaderH + totalErrH + 12;
+        } else if (node.errorHandlerRef) {
+          errBandH = L.errorBandHeaderH + 38;
+        }
+      }
+
       const headerTitleW = Math.ceil((node.label ? node.label.length * 7.5 : 0) + 75);
-      const scopeW = Math.max(inner.w + L.scopePad.left + L.scopePad.right, headerTitleW + L.scopePad.right + 24);
+      const innerW = Math.max(inner.w, isErrCollapsed ? 200 : maxErrLaneW, (!isErrCollapsed && node.errorHandlerRef) ? 260 : 0);
+      const scopeW = Math.max(innerW + L.scopePad.left + L.scopePad.right, headerTitleW + L.scopePad.right + 24);
+
+      const finalLaneW = scopeW - L.scopePad.left - L.scopePad.right;
+      for (const mr of measuredRoutes) {
+        mr.w = finalLaneW;
+      }
+
+      const totalH = inner.h + L.scopePad.top + (errBandH > 0 ? (12 + errBandH) : 0) + L.scopePad.bottom;
+
       return {
         node,
         w: scopeW,
-        h: inner.h + L.scopePad.top + L.scopePad.bottom,
+        h: totalH,
         laneY: L.scopePad.top + inner.laneY,
         innerChain: inner,
+        innerRoutes: measuredRoutes.length > 0 ? measuredRoutes : undefined,
+        errorCollapsed: isErrCollapsed,
       };
     }
 
@@ -242,14 +297,15 @@ export class MeasureEngine {
       sourceMeasured = this.measureNode(flow.source, 0);
     }
 
+    const isGlobalEH = flow.type === 'global-error-handler';
     const sourceH = flow.source ? L.tile.h : 0;
-    const bodyH = Math.max(processInner.h, sourceH, L.laneMinH);
+    const bodyH = isGlobalEH ? 0 : Math.max(processInner.h, sourceH, L.laneMinH);
 
     let errH = 0;
     const errorLanes: MeasuredRoute[] = [];
     let errorCollapsed = false;
 
-    if (flow.errorHandler.length > 0) {
+    if (flow.errorHandler.length > 0 || flow.errorHandlerRef) {
       if (flow.errorBandCollapsed !== undefined) {
         errorCollapsed = flow.errorBandCollapsed;
       } else if (collapseErrorHandlersOption === 'always') {
@@ -260,7 +316,7 @@ export class MeasureEngine {
 
       if (errorCollapsed) {
         errH = L.errorBandHeaderH;
-      } else {
+      } else if (flow.errorHandler.length > 0) {
         let maxErrLaneW = 0;
         let totalErrH = 0;
 
@@ -288,27 +344,30 @@ export class MeasureEngine {
           });
         }
 
-        const effectiveErrLaneW = Math.max(maxErrLaneW, processInner.w);
+        const effectiveErrLaneW = isGlobalEH ? Math.max(maxErrLaneW, 300) : Math.max(maxErrLaneW, processInner.w);
         for (const el of errorLanes) {
           el.w = effectiveErrLaneW;
         }
 
         errH = L.errorBandHeaderH + totalErrH + L.flowPad.bottom;
+      } else if (flow.errorHandlerRef) {
+        errH = L.errorBandHeaderH + 38;
       }
-    } else if (flow.errorHandlerRef) {
-      errH = L.errorBandHeaderH + 38;
     }
 
+    const maxLane = errorLanes.length > 0 ? Math.max(...errorLanes.map(el => el.w)) : 300;
     const flowTitleW = Math.ceil((flow.name ? flow.name.length * 8 : 0) + 200);
-    const contentW = L.flowPad.left + sourceW + Math.max(processInner.w, L.emptyPlaceholder.w) + L.flowPad.right;
+    const contentW = isGlobalEH
+      ? L.flowPad.left + maxLane + L.flowPad.right
+      : L.flowPad.left + sourceW + Math.max(processInner.w, L.emptyPlaceholder.w) + L.flowPad.right;
     const totalW = Math.max(contentW, flowTitleW + L.flowPad.right + 24);
-    const totalH = L.flowHeaderH + L.flowPad.top + bodyH + errH + L.flowPad.bottom;
+    const totalH = L.flowHeaderH + (isGlobalEH ? 8 : (L.flowPad.top + bodyH)) + errH + L.flowPad.bottom;
 
     return {
       flow,
       w: totalW,
       h: totalH,
-      laneY: L.flowHeaderH + L.flowPad.top + processInner.laneY,
+      laneY: isGlobalEH ? (L.flowHeaderH + 8) : (L.flowHeaderH + L.flowPad.top + processInner.laneY),
       sourceMeasured,
       processChain: processInner,
       errorLanes,

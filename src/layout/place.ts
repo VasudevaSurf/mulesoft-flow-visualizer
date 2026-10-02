@@ -40,16 +40,17 @@ export class PlaceEngine {
     let sourceBox: Box | null = null;
     let positionedSource: PositionedNode | null = null;
 
+    const isGlobalEH = mFlow.flow.type === 'global-error-handler';
     const hasSource = mFlow.flow.type === 'flow' && !!mFlow.sourceMeasured;
     const sourceW = hasSource ? L.sourceCompartmentW + L.sourceDividerW : 0;
     const bodyY = flowY + L.flowHeaderH + L.flowPad.top;
-    const bodyH = Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? L.tile.h : 0, L.laneMinH);
+    const bodyH = isGlobalEH ? 0 : Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? L.tile.h : 0, L.laneMinH);
 
     const processX = flowX + L.flowPad.left + sourceW;
     const processBox: Box = {
       x: processX,
       y: bodyY,
-      width: Math.max(mFlow.processChain.w, L.emptyPlaceholder.w),
+      width: isGlobalEH ? 0 : Math.max(mFlow.processChain.w, L.emptyPlaceholder.w),
       height: bodyH,
     };
 
@@ -69,14 +70,14 @@ export class PlaceEngine {
     }
 
     // Place process chain
-    const positionedChain = this.placeChain(mFlow.processChain, processX, processLaneY);
+    const positionedChain = isGlobalEH ? [] : this.placeChain(mFlow.processChain, processX, processLaneY);
 
     // Error band
     let errorBandBox: Box | null = null;
     const positionedErrorHandlers: PositionedRoute[] = [];
 
     if (mFlow.flow.errorHandler.length > 0) {
-      const errBandY = bodyY + bodyH + 16;
+      const errBandY = isGlobalEH ? (flowY + L.flowHeaderH + 8) : (bodyY + bodyH + 16);
       let errBandH = L.errorBandHeaderH;
 
       if (!mFlow.errorCollapsed) {
@@ -117,8 +118,8 @@ export class PlaceEngine {
         height: errBandH,
       };
     } else if (mFlow.flow.errorHandlerRef) {
-      const errBandY = bodyY + bodyH + 16;
-      const errBandH = L.errorBandHeaderH + 38;
+      const errBandY = isGlobalEH ? (flowY + L.flowHeaderH + 8) : (bodyY + bodyH + 16);
+      const errBandH = mFlow.errorCollapsed ? L.errorBandHeaderH : (L.errorBandHeaderH + 38);
       errorBandBox = {
         x: flowX + L.flowPad.left,
         y: errBandY,
@@ -177,6 +178,8 @@ export class PlaceEngine {
   ): PositionedNode {
     const positionedChildren: PositionedNode[] = [];
     const positionedRoutes: PositionedRoute[] = [];
+    let errorBandBox: Box | null = null;
+    const positionedErrorHandlers: PositionedRoute[] = [];
 
     // Scope: place inner chain
     if (mNode.innerChain) {
@@ -186,8 +189,53 @@ export class PlaceEngine {
       positionedChildren.push(...innerNodes);
     }
 
-    // Router: place routes vertically
-    if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+    const isScope = mNode.node.descriptor.kind === 'scope' || mNode.node.descriptor.localName === 'try';
+
+    if (isScope && (mNode.node.routes.length > 0 || mNode.node.errorHandlerRef)) {
+      // Scope with error handling (e.g. Try scope)
+      const errBandY = nodeY + L.scopePad.top + (mNode.innerChain ? mNode.innerChain.h : 0) + 12;
+      const errBandW = mNode.w - L.scopePad.left - L.scopePad.right;
+      let errBandH = L.errorBandHeaderH;
+
+      if (!mNode.errorCollapsed) {
+        if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+          let routeCursorY = errBandY + L.errorBandHeaderH + 8;
+          const errX = nodeX + L.scopePad.left;
+
+          for (const mRoute of mNode.innerRoutes) {
+            const routeLaneY = routeCursorY + mRoute.laneY;
+            const innerChainNodes = this.placeChain(mRoute.innerChain, errX + L.routerPad.left, routeLaneY);
+
+            const posRoute: PositionedRoute = {
+              routeId: mRoute.route.id,
+              route: mRoute.route,
+              x: errX,
+              y: routeCursorY,
+              width: mRoute.w,
+              height: mRoute.h,
+              laneY: routeLaneY,
+              children: innerChainNodes,
+            };
+            positionedRoutes.push(posRoute);
+            positionedErrorHandlers.push(posRoute);
+
+            routeCursorY += mRoute.h + L.routeGapY;
+          }
+
+          errBandH = routeCursorY - errBandY;
+        } else if (mNode.node.errorHandlerRef) {
+          errBandH = L.errorBandHeaderH + 38;
+        }
+      }
+
+      errorBandBox = {
+        x: nodeX + L.scopePad.left,
+        y: errBandY,
+        width: errBandW,
+        height: errBandH,
+      };
+    } else if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+      // Router: place routes vertically
       let routeCursorY = nodeY + L.routerPad.top;
       const routeX = nodeX + L.routerPad.left;
 
@@ -221,6 +269,9 @@ export class PlaceEngine {
       children: positionedChildren,
       routes: positionedRoutes,
       collapsedBadgeCount: mNode.collapsedBadgeCount,
+      errorBandBox,
+      errorHandlers: positionedErrorHandlers,
+      errorCollapsed: mNode.errorCollapsed,
     };
   }
 }

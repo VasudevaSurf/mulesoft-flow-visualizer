@@ -48,7 +48,9 @@ export type HostToWebviewMessage = {
     isRouter?: boolean;
     routerRoutes?: Array<{
         id: string;
+        routeId?: string;
         kind: string;
+        name?: string;
         expression?: string;
         label: string;
     }>;
@@ -123,13 +125,26 @@ export type WebviewToHostMessage = {
 } | {
     type: 'addChoiceRoute';
     nodeId: string;
+    routerNodeId?: string;
+    expression?: string;
 } | {
     type: 'deleteRoute';
     routeId: string;
+    routerNodeId?: string;
 } | {
     type: 'reorderChoiceRoutes';
     nodeId: string;
     fromIndex: number;
     toIndex: number;
+    routerNodeId?: string;
+    routeIndex?: number;
+    direction?: 'up' | 'down';
+} | {
+    type: 'webviewError';
+    message: string;
+    stack?: string;
+    source?: string;
+    lineno?: number;
+    colno?: number;
 };
 //# sourceMappingURL=messages.d.ts.map

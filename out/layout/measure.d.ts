@@ -9,6 +9,7 @@ export interface MeasuredNode extends MeasuredBox {
     innerChain?: MeasuredChain;
     innerRoutes?: MeasuredRoute[];
     collapsedBadgeCount?: number;
+    errorCollapsed?: boolean;
 }
 export interface MeasuredRoute extends MeasuredBox {
     route: Route;

@@ -169,10 +169,18 @@ class FlowVisualizerPanel {
             const config = vscode.workspace.getConfiguration('muleFlow');
             const collapseOption = config.get('collapseErrorHandlers') || 'auto';
             const theme = config.get('theme') || 'vscode';
+            const defaultErrCollapsed = (collapseOption === 'always' || (collapseOption === 'auto' && model.flows.length > 8));
             // Restore collapse state recursively for flows, containers, and error bands
             const applyCollapseState = (node) => {
                 if (this.collapsedNodeIds.has(node.id)) {
                     node.collapsed = true;
+                }
+                const errBandId = `${node.id}:errorBand`;
+                if (this.collapsedNodeIds.has(errBandId)) {
+                    node.errorBandCollapsed = !defaultErrCollapsed;
+                }
+                else {
+                    node.errorBandCollapsed = defaultErrCollapsed;
                 }
                 for (const child of node.chain) {
                     applyCollapseState(child);
@@ -183,7 +191,6 @@ class FlowVisualizerPanel {
                     }
                 }
             };
-            const defaultErrCollapsed = (collapseOption === 'always' || (collapseOption === 'auto' && model.flows.length > 8));
             for (const f of model.flows) {
                 if (this.collapsedNodeIds.has(f.id)) {
                     f.collapsed = true;
@@ -261,15 +268,37 @@ class FlowVisualizerPanel {
                 this.handleUpdateParameterValue(msg);
                 break;
             case 'addChoiceRoute':
-                this.handleAddChoiceRoute(msg.nodeId);
+                this.handleAddChoiceRoute(msg.nodeId || msg.routerNodeId);
                 break;
             case 'deleteRoute':
                 this.handleDeleteRoute(msg.routeId);
                 break;
-            case 'reorderChoiceRoutes':
-                this.handleReorderChoiceRoutes(msg.nodeId, msg.fromIndex, msg.toIndex);
+            case 'reorderChoiceRoutes': {
+                const nodeId = msg.nodeId || msg.routerNodeId;
+                let fromIdx = msg.fromIndex;
+                let toIdx = msg.toIndex;
+                if (fromIdx === undefined && msg.routeIndex !== undefined) {
+                    fromIdx = msg.routeIndex;
+                    toIdx = msg.direction === 'up' ? fromIdx - 1 : fromIdx + 1;
+                }
+                if (nodeId && fromIdx !== undefined && toIdx !== undefined) {
+                    this.handleReorderChoiceRoutes(nodeId, fromIdx, toIdx);
+                }
+                break;
+            }
+            case 'webviewError':
+                FlowVisualizerPanel.getOutputChannel().appendLine(`[Webview Error] ${msg.message}${msg.source ? ` (${msg.source}:${msg.lineno ?? ''}:${msg.colno ?? ''})` : ''}`);
+                if (msg.stack) {
+                    FlowVisualizerPanel.getOutputChannel().appendLine(`[Webview Stack] ${msg.stack}`);
+                }
                 break;
         }
+    }
+    static getOutputChannel() {
+        if (!FlowVisualizerPanel.outputChannel) {
+            FlowVisualizerPanel.outputChannel = vscode.window.createOutputChannel('Mule Flow Visualizer');
+        }
+        return FlowVisualizerPanel.outputChannel;
     }
     async handleShowProperties(msg) {
         // Compute static-only autocomplete context (variables declared earlier, preceding transform output shape)
@@ -615,7 +644,9 @@ class FlowVisualizerPanel {
         const routerRoutes = isRouter && targetNode?.routes
             ? targetNode.routes.map((r) => ({
                 id: r.id,
+                routeId: r.id,
                 kind: r.kind,
+                name: r.kind,
                 expression: r.attributes?.['expression'] || r.attributes?.['when'] || '',
                 label: r.label,
             }))
@@ -901,6 +932,7 @@ class FlowVisualizerPanel {
         return String(unsafe || '')
             .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)/g, '&amp;')
             .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
     }
     async handleUpdateParameterValue(msg) {
@@ -985,11 +1017,24 @@ class FlowVisualizerPanel {
         const openTag = nodeText.slice(0, openTagEnd);
         const workspaceEdit = new vscode.WorkspaceEdit();
         const escapedParam = msg.paramName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        let valToWrite = msg.value;
+        if ((msg.paramName === 'expression' || msg.paramName === 'when') && valToWrite !== null && valToWrite !== undefined) {
+            let strVal = String(valToWrite).trim();
+            if (strVal) {
+                if (!strVal.startsWith('#[')) {
+                    strVal = '#[' + strVal;
+                }
+                if (!strVal.endsWith(']')) {
+                    strVal = strVal + ']';
+                }
+                valToWrite = strVal;
+            }
+        }
         // 1. Check if the attribute already exists on the opening tag
         const attrRegex = new RegExp(`\\b${escapedParam}\\s*=\\s*("[^"]*"|'[^']*')`);
         const match = openTag.match(attrRegex);
         if (match && match.index !== undefined) {
-            if (msg.value === null || msg.value === undefined) {
+            if (msg.value === null || msg.value === undefined || (msg.paramName === 'when' && String(msg.value).trim() === '')) {
                 // Remove attribute
                 const fullAttrRegex = new RegExp(`\\s+\\b${escapedParam}\\s*=\\s*("[^"]*"|'[^']*')`);
                 const fullMatch = openTag.match(fullAttrRegex) || match;
@@ -1003,7 +1048,7 @@ class FlowVisualizerPanel {
                 const matchStartOffset = curDoc.offsetAt(nodeStartPos) + match.index;
                 const matchEndOffset = matchStartOffset + match[0].length;
                 const matchRange = new vscode.Range(curDoc.positionAt(matchStartOffset), curDoc.positionAt(matchEndOffset));
-                const escapedVal = FlowVisualizerPanel.escapeXml(String(msg.value));
+                const escapedVal = FlowVisualizerPanel.escapeXml(String(valToWrite));
                 workspaceEdit.replace(this.currentDocUri, matchRange, `${msg.paramName}="${escapedVal}"`);
             }
         }
@@ -1066,7 +1111,7 @@ class FlowVisualizerPanel {
             }
             else if (msg.value !== null && msg.value !== undefined && String(msg.value) !== '') {
                 // 3. Standard attribute insertion: insert into opening tag right before closing > or />
-                const escapedVal = FlowVisualizerPanel.escapeXml(String(msg.value));
+                const escapedVal = FlowVisualizerPanel.escapeXml(String(valToWrite));
                 if (isSelfClosing) {
                     const beforeSlash = openTag.slice(0, openTagEnd - 2);
                     const trailingWsMatch = beforeSlash.match(/\s+$/);
@@ -1104,7 +1149,7 @@ class FlowVisualizerPanel {
                     delete targetNode.attributes[msg.paramName];
                 }
                 else {
-                    targetNode.attributes[msg.paramName] = String(msg.value);
+                    targetNode.attributes[msg.paramName] = String(valToWrite);
                 }
             }
             if (node !== targetNode && node.attributes) {
@@ -1112,8 +1157,14 @@ class FlowVisualizerPanel {
                     delete node.attributes[msg.paramName];
                 }
                 else {
-                    node.attributes[msg.paramName] = String(msg.value);
+                    node.attributes[msg.paramName] = String(valToWrite);
                 }
+            }
+            if (targetNode.descriptor?.localName === 'when' && msg.paramName === 'expression') {
+                const strVal = String(valToWrite);
+                const cleaned = strVal.startsWith('#[') && strVal.endsWith(']') ? strVal.slice(2, -1).trim() : strVal;
+                const trunc = cleaned.length > 25 ? cleaned.slice(0, 22) + '...' : cleaned;
+                targetNode.label = cleaned ? `when #[${trunc}]` : 'when';
             }
             await curDoc.save();
         }
@@ -1411,10 +1462,25 @@ class FlowVisualizerPanel {
         if (!node)
             return;
         const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
-        const startPos = new vscode.Position(node.range.startLine, node.range.startCol);
-        const endPos = new vscode.Position(node.range.endLine, node.range.endCol);
+        const startLine = node.range.startLine;
+        const endLine = node.range.endLine;
+        const lineBefore = curDoc.lineAt(startLine);
+        const lineAfter = curDoc.lineAt(endLine);
+        let deleteRange;
+        if (lineBefore.text.slice(0, node.range.startCol).trim() === '' &&
+            lineAfter.text.slice(node.range.endCol).trim() === '') {
+            if (endLine < curDoc.lineCount - 1) {
+                deleteRange = new vscode.Range(new vscode.Position(startLine, 0), new vscode.Position(endLine + 1, 0));
+            }
+            else {
+                deleteRange = new vscode.Range(new vscode.Position(startLine, 0), lineAfter.range.end);
+            }
+        }
+        else {
+            deleteRange = new vscode.Range(new vscode.Position(node.range.startLine, node.range.startCol), new vscode.Position(node.range.endLine, node.range.endCol));
+        }
         const workspaceEdit = new vscode.WorkspaceEdit();
-        workspaceEdit.delete(this.currentDocUri, new vscode.Range(startPos, endPos));
+        workspaceEdit.delete(this.currentDocUri, deleteRange);
         const applied = await vscode.workspace.applyEdit(workspaceEdit);
         if (applied)
             await curDoc.save();
@@ -1429,6 +1495,8 @@ class FlowVisualizerPanel {
         const routeB = node.routes[toIndex];
         if (!routeA || !routeB)
             return;
+        if (routeA.kind === 'otherwise' || routeB.kind === 'otherwise')
+            return;
         const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
         const rangeA = new vscode.Range(new vscode.Position(routeA.range.startLine, routeA.range.startCol), new vscode.Position(routeA.range.endLine, routeA.range.endCol));
         const rangeB = new vscode.Range(new vscode.Position(routeB.range.startLine, routeB.range.startCol), new vscode.Position(routeB.range.endLine, routeB.range.endCol));
@@ -1440,6 +1508,110 @@ class FlowVisualizerPanel {
         const applied = await vscode.workspace.applyEdit(workspaceEdit);
         if (applied)
             await curDoc.save();
+    }
+    static updateExpressionInXml(xmlContent, routeRange, newExpr) {
+        let strVal = String(newExpr !== null && newExpr !== undefined ? newExpr : '').trim();
+        if (!strVal.startsWith('#[')) {
+            strVal = '#[' + strVal;
+        }
+        if (!strVal.endsWith(']')) {
+            strVal = strVal + ']';
+        }
+        const escapedVal = FlowVisualizerPanel.escapeXml(strVal);
+        const lines = xmlContent.split('\n');
+        let startOffset = 0;
+        for (let i = 0; i < routeRange.startLine && i < lines.length; i++) {
+            startOffset += lines[i].length + 1;
+        }
+        startOffset += routeRange.startCol;
+        const remaining = xmlContent.slice(startOffset);
+        let openTagEnd = remaining.length;
+        let inDouble = false;
+        let inSingle = false;
+        for (let i = 0; i < remaining.length; i++) {
+            const ch = remaining[i];
+            if (ch === '"' && !inSingle)
+                inDouble = !inDouble;
+            else if (ch === "'" && !inDouble)
+                inSingle = !inSingle;
+            else if (!inDouble && !inSingle && ch === '>') {
+                openTagEnd = i + 1;
+                break;
+            }
+        }
+        const openTag = remaining.slice(0, openTagEnd);
+        const attrRegex = /\bexpression\s*=\s*("[^"]*"|'[^']*')/;
+        const match = openTag.match(attrRegex);
+        if (match && match.index !== undefined) {
+            const replaceStart = startOffset + match.index;
+            const replaceEnd = replaceStart + match[0].length;
+            return xmlContent.slice(0, replaceStart) + `expression="${escapedVal}"` + xmlContent.slice(replaceEnd);
+        }
+        return xmlContent;
+    }
+    static deleteRouteInXml(xmlContent, routeRange) {
+        const lines = xmlContent.split('\n');
+        const startLine = routeRange.startLine;
+        const endLine = routeRange.endLine;
+        const lineBefore = lines[startLine] || '';
+        const lineAfter = lines[endLine] || '';
+        if (lineBefore.slice(0, routeRange.startCol).trim() === '' &&
+            lineAfter.slice(routeRange.endCol).trim() === '') {
+            let startOffset = 0;
+            for (let i = 0; i < startLine && i < lines.length; i++) {
+                startOffset += lines[i].length + 1;
+            }
+            let endOffset = 0;
+            for (let i = 0; i <= endLine && i < lines.length; i++) {
+                endOffset += lines[i].length + 1;
+            }
+            if (endOffset > xmlContent.length)
+                endOffset = xmlContent.length;
+            return xmlContent.slice(0, startOffset) + xmlContent.slice(endOffset);
+        }
+        let startOffset = 0;
+        for (let i = 0; i < startLine && i < lines.length; i++) {
+            startOffset += lines[i].length + 1;
+        }
+        startOffset += routeRange.startCol;
+        let endOffset = 0;
+        for (let i = 0; i < endLine && i < lines.length; i++) {
+            endOffset += lines[i].length + 1;
+        }
+        endOffset += routeRange.endCol;
+        return xmlContent.slice(0, startOffset) + xmlContent.slice(endOffset);
+    }
+    static reorderChoiceRoutesInXml(xmlContent, routeRangeA, routeRangeB) {
+        const lines = xmlContent.split('\n');
+        const getOffset = (range, isEnd) => {
+            let off = 0;
+            const line = isEnd ? range.endLine : range.startLine;
+            const col = isEnd ? range.endCol : range.startCol;
+            for (let i = 0; i < line && i < lines.length; i++) {
+                off += lines[i].length + 1;
+            }
+            return off + col;
+        };
+        const startA = getOffset(routeRangeA, false);
+        const endA = getOffset(routeRangeA, true);
+        const startB = getOffset(routeRangeB, false);
+        const endB = getOffset(routeRangeB, true);
+        const textA = xmlContent.slice(startA, endA);
+        const textB = xmlContent.slice(startB, endB);
+        if (startA < startB) {
+            return (xmlContent.slice(0, startA) +
+                textB +
+                xmlContent.slice(endA, startB) +
+                textA +
+                xmlContent.slice(endB));
+        }
+        else {
+            return (xmlContent.slice(0, startB) +
+                textA +
+                xmlContent.slice(endB, startA) +
+                textB +
+                xmlContent.slice(endA));
+        }
     }
     static findNodeInModel(model, id) {
         const routeToNode = (r) => ({

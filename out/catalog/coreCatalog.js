@@ -205,7 +205,7 @@ exports.CORE_CATALOG = {
                     {
                         name: "type",
                         label: "Type",
-                        description: "The full name of the error type to match against or a comma separated list of full names.",
+                        description: "The full name of the error type to match against or a comma-separated list of full names (e.g. HTTP:NOT_FOUND, CONNECTIVITY, ANY).",
                         dataType: "string",
                         required: false,
                         group: "General",
@@ -215,7 +215,7 @@ exports.CORE_CATALOG = {
                     },
                     {
                         name: "when",
-                        label: "Condition Expression",
+                        label: "Condition Expression (When)",
                         description: "A boolean expression that determines if this error handler should be executed.",
                         dataType: "string",
                         required: false,
@@ -224,6 +224,30 @@ exports.CORE_CATALOG = {
                         isReference: false,
                         expressionSupport: "SUPPORTED",
                         defaultExpressionMode: true
+                    },
+                    {
+                        name: "enableNotifications",
+                        label: "Enable Notifications",
+                        description: "Whether to publish notifications for errors caught by this handler.",
+                        dataType: "boolean",
+                        required: false,
+                        defaultValue: true,
+                        group: "General",
+                        supportsExpression: false,
+                        isReference: false,
+                        expressionSupport: "NOT_SUPPORTED"
+                    },
+                    {
+                        name: "logException",
+                        label: "Log Exception",
+                        description: "Whether to log the exception when an error occurs.",
+                        dataType: "boolean",
+                        required: false,
+                        defaultValue: true,
+                        group: "General",
+                        supportsExpression: false,
+                        isReference: false,
+                        expressionSupport: "NOT_SUPPORTED"
                     },
                     {
                         name: "doc:name",
@@ -283,7 +307,7 @@ exports.CORE_CATALOG = {
                     {
                         name: "type",
                         label: "Type",
-                        description: "The full name of the error type to match against or a comma separated list of full names.",
+                        description: "The full name of the error type to match against or a comma-separated list of full names (e.g. HTTP:NOT_FOUND, CONNECTIVITY, ANY).",
                         dataType: "string",
                         required: false,
                         group: "General",
@@ -293,7 +317,7 @@ exports.CORE_CATALOG = {
                     },
                     {
                         name: "when",
-                        label: "Condition Expression",
+                        label: "Condition Expression (When)",
                         description: "A boolean expression that determines if this error handler should be executed.",
                         dataType: "string",
                         required: false,
@@ -302,6 +326,30 @@ exports.CORE_CATALOG = {
                         isReference: false,
                         expressionSupport: "SUPPORTED",
                         defaultExpressionMode: true
+                    },
+                    {
+                        name: "enableNotifications",
+                        label: "Enable Notifications",
+                        description: "Whether to publish notifications for errors caught by this handler.",
+                        dataType: "boolean",
+                        required: false,
+                        defaultValue: true,
+                        group: "General",
+                        supportsExpression: false,
+                        isReference: false,
+                        expressionSupport: "NOT_SUPPORTED"
+                    },
+                    {
+                        name: "logException",
+                        label: "Log Exception",
+                        description: "Whether to log the exception when an error occurs.",
+                        dataType: "boolean",
+                        required: false,
+                        defaultValue: true,
+                        group: "General",
+                        supportsExpression: false,
+                        isReference: false,
+                        expressionSupport: "NOT_SUPPORTED"
                     },
                     {
                         name: "doc:name",

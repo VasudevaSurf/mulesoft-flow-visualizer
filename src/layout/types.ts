@@ -21,6 +21,9 @@ export interface PositionedNode extends Box {
   children: PositionedNode[];
   routes: PositionedRoute[];
   collapsedBadgeCount?: number;
+  errorBandBox?: Box | null;
+  errorHandlers?: PositionedRoute[];
+  errorCollapsed?: boolean;
 }
 
 export interface PositionedRoute extends Box {

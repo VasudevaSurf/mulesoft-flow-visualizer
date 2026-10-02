@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SemanticModel, Node } from '../parser/types';
+import { SourceRange, SemanticModel, Node } from '../parser/types';
 export declare class FlowVisualizerPanel {
     static currentPanel: FlowVisualizerPanel | undefined;
     private static readonly viewType;
@@ -18,6 +18,8 @@ export declare class FlowVisualizerPanel {
     private triggerUpdateDebounced;
     updateView(): Promise<void>;
     private handleWebviewMessage;
+    private static outputChannel;
+    static getOutputChannel(): vscode.OutputChannel;
     private handleShowProperties;
     private handleCreateConfiguration;
     private handleUpdateConfigRef;
@@ -42,13 +44,16 @@ export declare class FlowVisualizerPanel {
         }>;
         childValues: Record<string, string>;
     };
-    private static escapeXml;
+    static escapeXml(unsafe: string): string;
     private handleUpdateParameterValue;
     private handleTransformScriptUpdate;
     private handleTestConnection;
     private handleAddChoiceRoute;
-    private handleDeleteRoute;
-    private handleReorderChoiceRoutes;
+    handleDeleteRoute(routeId: string): Promise<void>;
+    handleReorderChoiceRoutes(nodeId: string, fromIndex: number, toIndex: number): Promise<void>;
+    static updateExpressionInXml(xmlContent: string, routeRange: SourceRange, newExpr: string): string;
+    static deleteRouteInXml(xmlContent: string, routeRange: SourceRange): string;
+    static reorderChoiceRoutesInXml(xmlContent: string, routeRangeA: SourceRange, routeRangeB: SourceRange): string;
     static findNodeInModel(model: SemanticModel, id: string): Node | null;
     findNodeInModel(model: SemanticModel, id: string): Node | null;
     private parseObjectKeys;

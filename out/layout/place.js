@@ -37,15 +37,16 @@ class PlaceEngine {
         };
         let sourceBox = null;
         let positionedSource = null;
+        const isGlobalEH = mFlow.flow.type === 'global-error-handler';
         const hasSource = mFlow.flow.type === 'flow' && !!mFlow.sourceMeasured;
         const sourceW = hasSource ? constants_1.L.sourceCompartmentW + constants_1.L.sourceDividerW : 0;
         const bodyY = flowY + constants_1.L.flowHeaderH + constants_1.L.flowPad.top;
-        const bodyH = Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? constants_1.L.tile.h : 0, constants_1.L.laneMinH);
+        const bodyH = isGlobalEH ? 0 : Math.max(mFlow.processChain.h, mFlow.sourceMeasured ? constants_1.L.tile.h : 0, constants_1.L.laneMinH);
         const processX = flowX + constants_1.L.flowPad.left + sourceW;
         const processBox = {
             x: processX,
             y: bodyY,
-            width: Math.max(mFlow.processChain.w, constants_1.L.emptyPlaceholder.w),
+            width: isGlobalEH ? 0 : Math.max(mFlow.processChain.w, constants_1.L.emptyPlaceholder.w),
             height: bodyH,
         };
         const processLaneY = bodyY + mFlow.processChain.laneY;
@@ -61,12 +62,12 @@ class PlaceEngine {
             positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
         }
         // Place process chain
-        const positionedChain = this.placeChain(mFlow.processChain, processX, processLaneY);
+        const positionedChain = isGlobalEH ? [] : this.placeChain(mFlow.processChain, processX, processLaneY);
         // Error band
         let errorBandBox = null;
         const positionedErrorHandlers = [];
         if (mFlow.flow.errorHandler.length > 0) {
-            const errBandY = bodyY + bodyH + 16;
+            const errBandY = isGlobalEH ? (flowY + constants_1.L.flowHeaderH + 8) : (bodyY + bodyH + 16);
             let errBandH = constants_1.L.errorBandHeaderH;
             if (!mFlow.errorCollapsed) {
                 let routeCursorY = errBandY + constants_1.L.errorBandHeaderH + 8;
@@ -102,8 +103,8 @@ class PlaceEngine {
             };
         }
         else if (mFlow.flow.errorHandlerRef) {
-            const errBandY = bodyY + bodyH + 16;
-            const errBandH = constants_1.L.errorBandHeaderH + 38;
+            const errBandY = isGlobalEH ? (flowY + constants_1.L.flowHeaderH + 8) : (bodyY + bodyH + 16);
+            const errBandH = mFlow.errorCollapsed ? constants_1.L.errorBandHeaderH : (constants_1.L.errorBandHeaderH + 38);
             errorBandBox = {
                 x: flowX + constants_1.L.flowPad.left,
                 y: errBandY,
@@ -148,6 +149,8 @@ class PlaceEngine {
     static placeNode(mNode, nodeX, nodeY, parentLaneY) {
         const positionedChildren = [];
         const positionedRoutes = [];
+        let errorBandBox = null;
+        const positionedErrorHandlers = [];
         // Scope: place inner chain
         if (mNode.innerChain) {
             const innerStartX = nodeX + constants_1.L.scopePad.left;
@@ -155,8 +158,48 @@ class PlaceEngine {
             const innerNodes = this.placeChain(mNode.innerChain, innerStartX, innerLaneY);
             positionedChildren.push(...innerNodes);
         }
-        // Router: place routes vertically
-        if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+        const isScope = mNode.node.descriptor.kind === 'scope' || mNode.node.descriptor.localName === 'try';
+        if (isScope && (mNode.node.routes.length > 0 || mNode.node.errorHandlerRef)) {
+            // Scope with error handling (e.g. Try scope)
+            const errBandY = nodeY + constants_1.L.scopePad.top + (mNode.innerChain ? mNode.innerChain.h : 0) + 12;
+            const errBandW = mNode.w - constants_1.L.scopePad.left - constants_1.L.scopePad.right;
+            let errBandH = constants_1.L.errorBandHeaderH;
+            if (!mNode.errorCollapsed) {
+                if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+                    let routeCursorY = errBandY + constants_1.L.errorBandHeaderH + 8;
+                    const errX = nodeX + constants_1.L.scopePad.left;
+                    for (const mRoute of mNode.innerRoutes) {
+                        const routeLaneY = routeCursorY + mRoute.laneY;
+                        const innerChainNodes = this.placeChain(mRoute.innerChain, errX + constants_1.L.routerPad.left, routeLaneY);
+                        const posRoute = {
+                            routeId: mRoute.route.id,
+                            route: mRoute.route,
+                            x: errX,
+                            y: routeCursorY,
+                            width: mRoute.w,
+                            height: mRoute.h,
+                            laneY: routeLaneY,
+                            children: innerChainNodes,
+                        };
+                        positionedRoutes.push(posRoute);
+                        positionedErrorHandlers.push(posRoute);
+                        routeCursorY += mRoute.h + constants_1.L.routeGapY;
+                    }
+                    errBandH = routeCursorY - errBandY;
+                }
+                else if (mNode.node.errorHandlerRef) {
+                    errBandH = constants_1.L.errorBandHeaderH + 38;
+                }
+            }
+            errorBandBox = {
+                x: nodeX + constants_1.L.scopePad.left,
+                y: errBandY,
+                width: errBandW,
+                height: errBandH,
+            };
+        }
+        else if (mNode.innerRoutes && mNode.innerRoutes.length > 0) {
+            // Router: place routes vertically
             let routeCursorY = nodeY + constants_1.L.routerPad.top;
             const routeX = nodeX + constants_1.L.routerPad.left;
             for (const mRoute of mNode.innerRoutes) {
@@ -186,6 +229,9 @@ class PlaceEngine {
             children: positionedChildren,
             routes: positionedRoutes,
             collapsedBadgeCount: mNode.collapsedBadgeCount,
+            errorBandBox,
+            errorHandlers: positionedErrorHandlers,
+            errorCollapsed: mNode.errorCollapsed,
         };
     }
 }

@@ -32,7 +32,14 @@ export type HostToWebviewMessage =
         outputType?: string;
       };
       isRouter?: boolean;
-      routerRoutes?: Array<{ id: string; kind: string; expression?: string; label: string }>;
+      routerRoutes?: Array<{
+        id: string;
+        routeId?: string;
+        kind: string;
+        name?: string;
+        expression?: string;
+        label: string;
+      }>;
       autocompleteContext?: {
         variables: Array<{ name: string; type?: string }>;
         precedingPayloadShape?: {
@@ -96,14 +103,28 @@ export type WebviewToHostMessage =
   | {
       type: 'addChoiceRoute';
       nodeId: string;
+      routerNodeId?: string;
+      expression?: string;
     }
   | {
       type: 'deleteRoute';
       routeId: string;
+      routerNodeId?: string;
     }
   | {
       type: 'reorderChoiceRoutes';
       nodeId: string;
       fromIndex: number;
       toIndex: number;
+      routerNodeId?: string;
+      routeIndex?: number;
+      direction?: 'up' | 'down';
+    }
+  | {
+      type: 'webviewError';
+      message: string;
+      stack?: string;
+      source?: string;
+      lineno?: number;
+      colno?: number;
     };
