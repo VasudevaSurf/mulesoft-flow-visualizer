@@ -24,7 +24,10 @@ export type HostToWebviewMessage =
       isTransform?: boolean;
       transformData?: {
         script: string;
+        payloadResource?: string;
+        hasPayload?: boolean;
         attributesScript?: string;
+        attributesResource?: string;
         targetVariables: Array<{ name: string; script: string; resource?: string }>;
         outputType?: string;
       };

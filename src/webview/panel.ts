@@ -342,19 +342,25 @@ export class FlowVisualizerPanel {
 
     if (isTransform) {
       let payloadScript = '%dw 2.0\noutput application/json\n---\n{\n}';
+      let payloadResource: string | undefined = undefined;
+      let hasPayload = false;
       let attributesScript: string | undefined = undefined;
+      let attributesResource: string | undefined = undefined;
       const targetVariables: Array<{ name: string; script: string; resource?: string }> = [];
       let outputType = 'application/json';
 
       const node = this.lastModel ? this.findNodeInModel(this.lastModel, msg.nodeId) : null;
       if (node) {
         const bodyContent = FlowVisualizerPanel.extractComponentBody(node, this.currentDocUri);
-        if (bodyContent.primaryScript) {
+        hasPayload = !!bodyContent.hasPayload;
+        if (bodyContent.primaryScript !== undefined) {
           payloadScript = bodyContent.primaryScript;
         }
-        if (bodyContent.attributesScript) {
-          attributesScript = bodyContent.attributesScript;
+        payloadResource = bodyContent.payloadResource;
+        if (bodyContent.hasAttributes || bodyContent.attributesScript !== undefined) {
+          attributesScript = bodyContent.attributesScript ?? '';
         }
+        attributesResource = bodyContent.attributesResource;
         if (bodyContent.variables && bodyContent.variables.length > 0) {
           targetVariables.push(...bodyContent.variables);
         }
@@ -389,7 +395,10 @@ export class FlowVisualizerPanel {
         isTransform: true,
         transformData: {
           script: payloadScript,
+          payloadResource,
+          hasPayload,
           attributesScript,
+          attributesResource,
           targetVariables,
           outputType,
         },
@@ -842,6 +851,89 @@ export class FlowVisualizerPanel {
     await curDoc.save();
   }
 
+  public static getProjectRoot(docFsPath: string): string {
+    let cur = path.dirname(path.resolve(docFsPath));
+    const root = cur;
+    while (cur && cur !== path.dirname(cur)) {
+      if (
+        fs.existsSync(path.join(cur, 'pom.xml')) ||
+        fs.existsSync(path.join(cur, 'mule-artifact.json')) ||
+        fs.existsSync(path.join(cur, '.project'))
+      ) {
+        return cur;
+      }
+      cur = path.dirname(cur);
+    }
+    const match = docFsPath.match(/(.*?)[\\\/]src[\\\/]/i);
+    if (match) {
+      return path.resolve(match[1]);
+    }
+    return root;
+  }
+
+  public static resolveDwlResourcePath(
+    resPath: string,
+    currentDocUri?: vscode.Uri | null
+  ): string | null {
+    if (!resPath) return null;
+    let clean = resPath.trim();
+    if (clean.toLowerCase().startsWith('classpath:')) {
+      clean = clean.slice('classpath:'.length).trim();
+    }
+    while (clean.startsWith('/') || clean.startsWith('\\')) {
+      clean = clean.slice(1);
+    }
+    if (!clean) return null;
+
+    const normalizedClean = clean.replace(/\\/g, '/');
+
+    const docFsPath = currentDocUri?.fsPath;
+    const xmlDir = docFsPath ? path.dirname(path.resolve(docFsPath)) : process.cwd();
+    const projectRoot = docFsPath ? FlowVisualizerPanel.getProjectRoot(docFsPath) : xmlDir;
+
+    // Ordered candidate locations:
+    // 1. relative to the XML file
+    // 2. <project>/src/main/resources/
+    // 3. <project>/src/main/mule/
+    // 4. <project>/src/test/resources/
+    // 5. <project>/src/test/munit/
+    const candidates = [
+      path.resolve(xmlDir, normalizedClean),
+      path.resolve(projectRoot, 'src', 'main', 'resources', normalizedClean),
+      path.resolve(projectRoot, 'src', 'main', 'mule', normalizedClean),
+      path.resolve(projectRoot, 'src', 'test', 'resources', normalizedClean),
+      path.resolve(projectRoot, 'src', 'test', 'munit', normalizedClean),
+    ];
+
+    for (const cand of candidates) {
+      try {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          return cand;
+        }
+      } catch {
+        // Continue checking next candidate
+      }
+    }
+
+    return null;
+  }
+
+  public static loadDwlResource(
+    resPath: string,
+    currentDocUri?: vscode.Uri | null
+  ): string {
+    if (!resPath) return '';
+    const resolvedPath = FlowVisualizerPanel.resolveDwlResourcePath(resPath, currentDocUri);
+    if (resolvedPath) {
+      try {
+        return fs.readFileSync(resolvedPath, 'utf-8');
+      } catch (err) {
+        console.warn('Failed to read DWL file at:', resolvedPath, err);
+      }
+    }
+    return `Resource not found: ${resPath}`;
+  }
+
   /**
    * Generic reader that walks a component's Node.body structure to extract
    * payload script, target variables, and child element values without regex re-scraping.
@@ -851,13 +943,21 @@ export class FlowVisualizerPanel {
     currentDocUri?: vscode.Uri | null
   ): {
     primaryScript?: string;
+    payloadResource?: string;
+    hasPayload?: boolean;
     attributesScript?: string;
+    attributesResource?: string;
+    hasAttributes?: boolean;
     variables: Array<{ name: string; script: string; resource?: string }>;
     childValues: Record<string, string>;
   } {
     const result: {
       primaryScript?: string;
+      payloadResource?: string;
+      hasPayload?: boolean;
       attributesScript?: string;
+      attributesResource?: string;
+      hasAttributes?: boolean;
       variables: Array<{ name: string; script: string; resource?: string }>;
       childValues: Record<string, string>;
     } = {
@@ -871,31 +971,8 @@ export class FlowVisualizerPanel {
 
     if (node.text && node.text.trim()) {
       result.primaryScript = node.text.trim();
+      result.hasPayload = true;
     }
-
-    const loadDwlResource = (resPath: string): string => {
-      if (!currentDocUri || !resPath) return '';
-      try {
-        const fsPath = currentDocUri.fsPath;
-        const dir = path.dirname(fsPath);
-        // Try relative to XML file
-        const directCandidate = path.resolve(dir, resPath);
-        if (fs.existsSync(directCandidate)) {
-          return fs.readFileSync(directCandidate, 'utf-8');
-        }
-        // Try src/main/resources
-        const match = fsPath.match(/(.*?src[\\\/]main[\\\/])/i);
-        if (match) {
-          const resCandidate = path.resolve(match[1], 'resources', resPath);
-          if (fs.existsSync(resCandidate)) {
-            return fs.readFileSync(resCandidate, 'utf-8');
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to load dwl resource:', resPath, err);
-      }
-      return '';
-    };
 
     const traverse = (elements: RawElement[]) => {
       for (const el of elements) {
@@ -909,30 +986,38 @@ export class FlowVisualizerPanel {
             el.attributes['key'] ||
             'variable';
           const resource = el.attributes['resource'];
-          let script = el.text !== null && el.text !== undefined ? el.text.trim() : '';
-          if (!script && resource) {
-            script = loadDwlResource(resource);
+          let script = '';
+          if (resource) {
+            script = FlowVisualizerPanel.loadDwlResource(resource, currentDocUri);
+          } else if (el.text !== null && el.text !== undefined) {
+            script = el.text.trim();
           }
           result.variables.push({ name: varName, script, resource });
         }
         // 2. Primary payload script: <set-payload> or <payload>
         else if (local === 'set-payload' || local === 'payload') {
+          result.hasPayload = true;
           const resource = el.attributes['resource'];
-          if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
+          if (resource) {
+            result.payloadResource = resource;
+            result.primaryScript = FlowVisualizerPanel.loadDwlResource(resource, currentDocUri);
+          } else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
             result.primaryScript = el.text.trim();
-          } else if (resource) {
-            const loaded = loadDwlResource(resource);
-            if (loaded) result.primaryScript = loaded;
+          } else {
+            result.primaryScript = '';
           }
         }
         // 3. Attributes script: <set-attributes>
-        else if (local === 'set-attributes') {
+        else if (local === 'set-attributes' || local === 'attributes') {
+          result.hasAttributes = true;
           const resource = el.attributes['resource'];
-          if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
+          if (resource) {
+            result.attributesResource = resource;
+            result.attributesScript = FlowVisualizerPanel.loadDwlResource(resource, currentDocUri);
+          } else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
             result.attributesScript = el.text.trim();
-          } else if (resource) {
-            const loaded = loadDwlResource(resource);
-            if (loaded) result.attributesScript = loaded;
+          } else {
+            result.attributesScript = '';
           }
         }
         // 4. Child elements with text/CDATA content
@@ -940,6 +1025,7 @@ export class FlowVisualizerPanel {
           result.childValues[el.localName] = el.text.trim();
           if (!result.primaryScript && (local === 'sql' || local === 'body' || local === 'content')) {
             result.primaryScript = el.text.trim();
+            result.hasPayload = true;
           }
         }
 
@@ -958,6 +1044,7 @@ export class FlowVisualizerPanel {
     if (!result.primaryScript && Object.keys(result.childValues).length > 0) {
       const firstKey = Object.keys(result.childValues)[0];
       result.primaryScript = result.childValues[firstKey];
+      result.hasPayload = true;
     }
 
     return result;
@@ -981,7 +1068,13 @@ export class FlowVisualizerPanel {
     if (!node) return;
 
     // Handle Transform Message script write-back (replacing CDATA/child element content)
-    if (msg.paramName === '__transform_payload__' || msg.paramName.startsWith('__transform_var:')) {
+    if (
+      msg.paramName === '__transform_payload__' ||
+      msg.paramName === '__transform_attributes__' ||
+      msg.paramName.startsWith('__transform_var:') ||
+      msg.paramName === '__transform_delete_attributes__' ||
+      msg.paramName.startsWith('__transform_delete_var:')
+    ) {
       await this.handleTransformScriptUpdate(node, msg.paramName, String(msg.value));
       return;
     }
@@ -1211,6 +1304,83 @@ export class FlowVisualizerPanel {
     const nodeRange = new vscode.Range(nodeStartPos, nodeEndPos);
     const nodeText = curDoc.getText(nodeRange);
 
+    // Helper: write to DWL resource file if present
+    const writeToDwlResource = (resPath: string): boolean => {
+      let targetPath = FlowVisualizerPanel.resolveDwlResourcePath(resPath, this.currentDocUri);
+      if (!targetPath && this.currentDocUri) {
+        let clean = resPath.trim();
+        if (clean.toLowerCase().startsWith('classpath:')) {
+          clean = clean.slice('classpath:'.length).trim();
+        }
+        while (clean.startsWith('/') || clean.startsWith('\\')) {
+          clean = clean.slice(1);
+        }
+        const projectRoot = FlowVisualizerPanel.getProjectRoot(this.currentDocUri.fsPath);
+        targetPath = path.resolve(projectRoot, 'src', 'main', 'resources', clean);
+      }
+      if (targetPath) {
+        try {
+          const dir = path.dirname(targetPath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(targetPath, newScript, 'utf-8');
+          return true;
+        } catch (err) {
+          console.error('Failed to write DWL resource file:', targetPath, err);
+        }
+      }
+      return false;
+    };
+
+    // First check if target comes from a resource="..." file
+    const bodyContent = FlowVisualizerPanel.extractComponentBody(node, this.currentDocUri);
+
+    if (paramName === '__transform_payload__') {
+      if (bodyContent.payloadResource) {
+        writeToDwlResource(bodyContent.payloadResource);
+        return;
+      }
+    } else if (paramName === '__transform_attributes__') {
+      if (bodyContent.attributesResource) {
+        writeToDwlResource(bodyContent.attributesResource);
+        return;
+      }
+    } else if (paramName.startsWith('__transform_var:')) {
+      const varName = paramName.slice('__transform_var:'.length);
+      const targetVar = bodyContent.variables.find((v) => v.name === varName);
+      if (targetVar?.resource) {
+        writeToDwlResource(targetVar.resource);
+        return;
+      }
+    }
+
+
+
+    // Double check regex in nodeText for resource attribute in case body was out of sync
+    if (paramName === '__transform_payload__') {
+      const resMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?(?:set-payload|payload)\b[^>]*\bresource="([^"]+)"/);
+      if (resMatch && resMatch[2]) {
+        writeToDwlResource(resMatch[2]);
+        return;
+      }
+    } else if (paramName === '__transform_attributes__') {
+      const resMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?(?:set-attributes|attributes)\b[^>]*\bresource="([^"]+)"/);
+      if (resMatch && resMatch[2]) {
+        writeToDwlResource(resMatch[2]);
+        return;
+      }
+    } else if (paramName.startsWith('__transform_var:')) {
+      const varName = paramName.slice('__transform_var:'.length);
+      const resMatch1 = nodeText.match(new RegExp(`<([a-zA-Z0-9_-]+:)?(?:set-variable|variable)\\b[^>]*\\bvariableName="${varName}"[^>]*\\bresource="([^"]+)"`));
+      const resMatch2 = nodeText.match(new RegExp(`<([a-zA-Z0-9_-]+:)?(?:set-variable|variable)\\b[^>]*\\bresource="([^"]+)"[^>]*\\bvariableName="${varName}"`));
+      const resVal = resMatch1?.[2] || resMatch2?.[2];
+      if (resVal) {
+        writeToDwlResource(resVal);
+        return;
+      }
+    }
+
     const workspaceEdit = new vscode.WorkspaceEdit();
 
     if (paramName === '__transform_delete_var:' || paramName.startsWith('__transform_delete_var:')) {
@@ -1233,8 +1403,10 @@ export class FlowVisualizerPanel {
         workspaceEdit.delete(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)));
       }
     } else if (paramName === '__transform_attributes__') {
-      const setAttrRegex = /<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-attributes>/;
-      const match = nodeText.match(setAttrRegex);
+      const setAttrPairRegex = /<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-attributes>/;
+      const setAttrSelfClosingRegex = /<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*\/>/;
+      const match = nodeText.match(setAttrPairRegex);
+      const selfMatch = nodeText.match(setAttrSelfClosingRegex);
       const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
 
       if (match && match.index !== undefined) {
@@ -1250,6 +1422,10 @@ export class FlowVisualizerPanel {
           const innerEndOffset = innerStartOffset + fullInner.length;
           workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(innerStartOffset), curDoc.positionAt(innerEndOffset)), `<![CDATA[${newScript}]]>`);
         }
+      } else if (selfMatch && selfMatch.index !== undefined) {
+        const startOffset = curDoc.offsetAt(nodeStartPos) + selfMatch.index;
+        const endOffset = startOffset + selfMatch[0].length;
+        workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)), `<${prefix}:set-attributes><![CDATA[${newScript}]]></${prefix}:set-attributes>`);
       } else {
         const messageRegex = /<([a-zA-Z0-9_-]+:)?message\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?message>/;
         const msgMatch = nodeText.match(messageRegex);
@@ -1265,8 +1441,11 @@ export class FlowVisualizerPanel {
         }
       }
     } else if (paramName === '__transform_payload__') {
-      const setPayloadRegex = /<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/;
-      const match = nodeText.match(setPayloadRegex);
+      const setPayloadPairRegex = /<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/;
+      const setPayloadSelfClosingRegex = /<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*\/>/;
+      const match = nodeText.match(setPayloadPairRegex);
+      const selfMatch = nodeText.match(setPayloadSelfClosingRegex);
+      const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
 
       if (match && match.index !== undefined) {
         const fullInner = match[2];
@@ -1290,10 +1469,13 @@ export class FlowVisualizerPanel {
           );
           workspaceEdit.replace(this.currentDocUri, replaceRange, `<![CDATA[${newScript}]]>`);
         }
+      } else if (selfMatch && selfMatch.index !== undefined) {
+        const startOffset = curDoc.offsetAt(nodeStartPos) + selfMatch.index;
+        const endOffset = startOffset + selfMatch[0].length;
+        workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)), `<${prefix}:set-payload><![CDATA[${newScript}]]></${prefix}:set-payload>`);
       } else {
         const messageRegex = /<([a-zA-Z0-9_-]+:)?message\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?message>/;
         const msgMatch = nodeText.match(messageRegex);
-        const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
 
         if (msgMatch && msgMatch.index !== undefined) {
           const insertOffset = curDoc.offsetAt(nodeStartPos) + msgMatch.index + msgMatch[0].indexOf(msgMatch[2]);
@@ -1319,10 +1501,14 @@ export class FlowVisualizerPanel {
     } else if (paramName.startsWith('__transform_var:')) {
       const varName = paramName.slice('__transform_var:'.length);
       const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
-      const varRegex = new RegExp(
+      const setVarPairRegex = new RegExp(
         `<([a-zA-Z0-9_-]+:)?set-variable\\b[^>]*variableName="${varName}"[^>]*>([\\s\\S]*?)<\\/([a-zA-Z0-9_-]+:)?set-variable>`
       );
-      const match = nodeText.match(varRegex);
+      const setVarSelfClosingRegex = new RegExp(
+        `<([a-zA-Z0-9_-]+:)?set-variable\\b[^>]*variableName="${varName}"[^>]*\\/>`
+      );
+      const match = nodeText.match(setVarPairRegex);
+      const selfMatch = nodeText.match(setVarSelfClosingRegex);
 
       if (match && match.index !== undefined) {
         const fullInner = match[2];
@@ -1346,6 +1532,10 @@ export class FlowVisualizerPanel {
           );
           workspaceEdit.replace(this.currentDocUri, replaceRange, `<![CDATA[${newScript}]]>`);
         }
+      } else if (selfMatch && selfMatch.index !== undefined) {
+        const startOffset = curDoc.offsetAt(nodeStartPos) + selfMatch.index;
+        const endOffset = startOffset + selfMatch[0].length;
+        workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)), `<${prefix}:set-variable variableName="${varName}"><![CDATA[${newScript}]]></${prefix}:set-variable>`);
       } else {
         const varsRegex = /<([a-zA-Z0-9_-]+:)?variables\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?variables>/;
         const varsMatch = nodeText.match(varsRegex);
@@ -1733,7 +1923,7 @@ export class FlowVisualizerPanel {
       }
 
       if (n.descriptor && (n.descriptor.localName === 'transform' || n.descriptor.localName === 'transform-message')) {
-        const bodyContent = FlowVisualizerPanel.extractComponentBody(n);
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(n, this.currentDocUri);
         for (const v of bodyContent.variables) {
           if (!seenVarNames.has(v.name)) {
             seenVarNames.add(v.name);
@@ -1748,7 +1938,7 @@ export class FlowVisualizerPanel {
     const prevNode = nodesBefore.length > 0 ? nodesBefore[nodesBefore.length - 1] : undefined;
     if (prevNode && prevNode.descriptor && (prevNode.descriptor.localName === 'transform' || prevNode.descriptor.localName === 'transform-message')) {
       try {
-        const bodyContent = FlowVisualizerPanel.extractComponentBody(prevNode);
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(prevNode, this.currentDocUri);
         if (bodyContent.primaryScript) {
           precedingPayloadShape = this.extractDataWeaveShape(bodyContent.primaryScript);
         }

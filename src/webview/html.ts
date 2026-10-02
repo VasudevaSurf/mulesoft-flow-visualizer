@@ -2106,22 +2106,62 @@ export class WebviewHtmlBuilder {
       };
 
       // Model for targets
-      const targets = [
-        { id: 'payload', label: 'Payload', type: 'payload', paramName: '__transform_payload__', script: transformData.script || '%dw 2.0\\noutput application/json\\n---\\n{\\n}', canDelete: false }
-      ];
+      const targets = [];
+      const hasOtherTargets = (transformData.attributesScript !== undefined) || (transformData.targetVariables && transformData.targetVariables.length > 0);
+      const shouldIncludePayload = transformData.hasPayload !== false || !hasOtherTargets;
+
+      if (shouldIncludePayload) {
+        targets.push({
+          id: 'payload',
+          label: 'Payload',
+          type: 'payload',
+          paramName: '__transform_payload__',
+          script: transformData.script !== undefined ? transformData.script : '%dw 2.0\\noutput application/json\\n---\\n{\\n}',
+          resource: transformData.payloadResource,
+          canDelete: hasOtherTargets
+        });
+      }
 
       if (transformData.attributesScript !== undefined) {
-        targets.push({ id: 'attributes', label: 'Attributes', type: 'attributes', paramName: '__transform_attributes__', script: transformData.attributesScript, canDelete: true });
+        targets.push({
+          id: 'attributes',
+          label: 'Attributes',
+          type: 'attributes',
+          paramName: '__transform_attributes__',
+          script: transformData.attributesScript,
+          resource: transformData.attributesResource,
+          canDelete: true
+        });
       }
 
       if (transformData.targetVariables && transformData.targetVariables.length > 0) {
         for (let i = 0; i < transformData.targetVariables.length; i++) {
           const tv = transformData.targetVariables[i];
-          targets.push({ id: 'var:' + tv.name, label: 'vars.' + tv.name, type: 'variable', name: tv.name, paramName: '__transform_var:' + tv.name, script: tv.script || '%dw 2.0\\noutput application/java\\n---\\npayload', canDelete: true });
+          targets.push({
+            id: 'var:' + tv.name,
+            label: 'vars.' + tv.name,
+            type: 'variable',
+            name: tv.name,
+            paramName: '__transform_var:' + tv.name,
+            script: tv.script !== undefined ? tv.script : '%dw 2.0\\noutput application/java\\n---\\npayload',
+            resource: tv.resource,
+            canDelete: true
+          });
         }
       }
 
-      let activeTargetId = 'payload';
+      if (targets.length === 0) {
+        targets.push({
+          id: 'payload',
+          label: 'Payload',
+          type: 'payload',
+          paramName: '__transform_payload__',
+          script: '%dw 2.0\\noutput application/json\\n---\\n{\\n}',
+          canDelete: false
+        });
+      }
+
+      let activeTargetId = targets[0].id;
 
       const container = document.createElement('div');
       container.className = 'transform-editor-layout';
@@ -2196,13 +2236,18 @@ export class WebviewHtmlBuilder {
       function updateHeaderForTarget(target) {
         const indicator = rightDiv.querySelector('#dw-target-indicator');
         if (indicator) {
+          let labelText = target.label;
           if (target.type === 'payload') {
-            indicator.textContent = 'Payload (Target: payload)';
+            labelText = 'Payload (Target: payload)';
           } else if (target.type === 'attributes') {
-            indicator.textContent = 'Attributes (Target: attributes)';
+            labelText = 'Attributes (Target: attributes)';
           } else {
-            indicator.textContent = 'Variable (Target: ' + target.name + ')';
+            labelText = 'Variable (Target: ' + target.name + ')';
           }
+          if (target.resource) {
+            labelText += ' [Resource: ' + target.resource + ']';
+          }
+          indicator.textContent = labelText;
         }
         if (outputSelect) {
           const match = target.script.match(/output\\s+([a-zA-Z0-9_\\-\\/]+)/);

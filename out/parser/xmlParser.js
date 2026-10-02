@@ -114,9 +114,9 @@ class MuleXmlParser {
             stack.push(frame);
         });
         parser.on('text', (text) => {
-            if (stack.length > 0 && text.trim()) {
+            if (stack.length > 0) {
                 const top = stack[stack.length - 1];
-                top.text = (top.text || '') + text.trim();
+                top.text = (top.text || '') + text;
             }
         });
         parser.on('cdata', (cdata) => {
@@ -134,6 +134,11 @@ class MuleXmlParser {
             // Update full element end range
             frame.range.endLine = Math.max(0, parser.line - 1);
             frame.range.endCol = Math.max(0, parser.column - 1);
+            let textValue = null;
+            if (frame.children.length === 0 && frame.text !== null && frame.text !== undefined) {
+                const trimmed = frame.text.trim();
+                textValue = trimmed.length > 0 ? trimmed : null;
+            }
             const element = {
                 prefix: frame.prefix,
                 localName: frame.localName,
@@ -142,7 +147,7 @@ class MuleXmlParser {
                 children: frame.children,
                 range: frame.range,
                 nameRange: frame.nameRange,
-                text: frame.text,
+                text: textValue,
             };
             if (stack.length > 0) {
                 stack[stack.length - 1].children.push(element);

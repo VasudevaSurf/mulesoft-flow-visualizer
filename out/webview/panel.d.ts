@@ -21,13 +21,20 @@ export declare class FlowVisualizerPanel {
     private handleShowProperties;
     private handleCreateConfiguration;
     private handleUpdateConfigRef;
+    static getProjectRoot(docFsPath: string): string;
+    static resolveDwlResourcePath(resPath: string, currentDocUri?: vscode.Uri | null): string | null;
+    static loadDwlResource(resPath: string, currentDocUri?: vscode.Uri | null): string;
     /**
      * Generic reader that walks a component's Node.body structure to extract
      * payload script, target variables, and child element values without regex re-scraping.
      */
     static extractComponentBody(node?: Node | null, currentDocUri?: vscode.Uri | null): {
         primaryScript?: string;
+        payloadResource?: string;
+        hasPayload?: boolean;
         attributesScript?: string;
+        attributesResource?: string;
+        hasAttributes?: boolean;
         variables: Array<{
             name: string;
             script: string;
