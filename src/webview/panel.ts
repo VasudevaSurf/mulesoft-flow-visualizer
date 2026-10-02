@@ -6,13 +6,13 @@ import { SemanticModelBuilder } from '../parser/semanticModel';
 import { layout } from '../layout';
 import { IconStore } from '../catalog/iconStore';
 import { ExtensionCatalog } from '../catalog';
-import { CORE_CATALOG } from '../catalog/coreCatalog';
+import { CORE_CATALOG, MULE_CORE_NAMESPACE } from '../catalog/coreCatalog';
 import { WorkspaceScanner } from '../workspace/scanner';
 import { MavenRepo } from '../workspace/mavenRepo';
 import { ConnectionTester } from '../workspace/connectionTester';
 import { WebviewHtmlBuilder } from './html';
 import { HostToWebviewMessage, WebviewToHostMessage } from './messages';
-import { SourceRange, SemanticModel, Node, FlowModel, RawElement } from '../parser/types';
+import { SourceRange, SemanticModel, Node, Route, FlowModel, RawElement } from '../parser/types';
 import { PositionedScene } from '../layout/types';
 import {
   toDisplayLabel,
@@ -298,6 +298,18 @@ export class FlowVisualizerPanel {
       case 'updateParameterValue':
         this.handleUpdateParameterValue(msg);
         break;
+
+      case 'addChoiceRoute':
+        this.handleAddChoiceRoute(msg.nodeId);
+        break;
+
+      case 'deleteRoute':
+        this.handleDeleteRoute(msg.routeId);
+        break;
+
+      case 'reorderChoiceRoutes':
+        this.handleReorderChoiceRoutes(msg.nodeId, msg.fromIndex, msg.toIndex);
+        break;
     }
   }
 
@@ -330,14 +342,18 @@ export class FlowVisualizerPanel {
 
     if (isTransform) {
       let payloadScript = '%dw 2.0\noutput application/json\n---\n{\n}';
-      const targetVariables: Array<{ name: string; script: string }> = [];
+      let attributesScript: string | undefined = undefined;
+      const targetVariables: Array<{ name: string; script: string; resource?: string }> = [];
       let outputType = 'application/json';
 
       const node = this.lastModel ? this.findNodeInModel(this.lastModel, msg.nodeId) : null;
       if (node) {
-        const bodyContent = FlowVisualizerPanel.extractComponentBody(node);
+        const bodyContent = FlowVisualizerPanel.extractComponentBody(node, this.currentDocUri);
         if (bodyContent.primaryScript) {
           payloadScript = bodyContent.primaryScript;
+        }
+        if (bodyContent.attributesScript) {
+          attributesScript = bodyContent.attributesScript;
         }
         if (bodyContent.variables && bodyContent.variables.length > 0) {
           targetVariables.push(...bodyContent.variables);
@@ -373,6 +389,7 @@ export class FlowVisualizerPanel {
         isTransform: true,
         transformData: {
           script: payloadScript,
+          attributesScript,
           targetVariables,
           outputType,
         },
@@ -554,7 +571,7 @@ export class FlowVisualizerPanel {
     let groups: ParameterGroupModel[] = [];
 
     const targetNode = this.lastModel ? this.findNodeInModel(this.lastModel, msg.nodeId) : null;
-    const bodyContent = FlowVisualizerPanel.extractComponentBody(targetNode);
+    const bodyContent = FlowVisualizerPanel.extractComponentBody(targetNode, this.currentDocUri);
     const combinedAttributes: Record<string, any> = {
       ...bodyContent.childValues,
       ...msg.attributes,
@@ -636,6 +653,54 @@ export class FlowVisualizerPanel {
       groups = groupParameters(params);
     }
 
+    // Ensure every component has a Documentation / Notes tab with doc:name and doc:description
+    const hasNotes = groups.some(g => g.name.toLowerCase() === 'notes' || g.name.toLowerCase() === 'documentation');
+    if (!hasNotes) {
+      groups.push({
+        name: 'Documentation',
+        parameters: [
+          {
+            name: 'doc:name',
+            label: 'Display Name',
+            description: 'Display name for this component.',
+            dataType: 'string',
+            required: false,
+            group: 'Documentation',
+            supportsExpression: false,
+            isReference: false,
+            expressionSupport: 'NOT_SUPPORTED',
+            defaultValue: combinedAttributes['doc:name'] || displayName,
+          },
+          {
+            name: 'doc:description',
+            label: 'Description',
+            description: 'Component documentation and notes.',
+            dataType: 'string',
+            required: false,
+            group: 'Documentation',
+            supportsExpression: false,
+            isReference: false,
+            expressionSupport: 'NOT_SUPPORTED',
+            defaultValue: combinedAttributes['doc:description'] || '',
+          },
+        ],
+      });
+    }
+
+    const isRouter =
+      targetNode?.descriptor?.kind === 'router' ||
+      targetNode?.descriptor?.localName === 'choice' ||
+      Boolean(targetNode?.routes && targetNode.routes.length > 0);
+
+    const routerRoutes = isRouter && targetNode?.routes
+      ? targetNode.routes.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          expression: r.attributes?.['expression'] || r.attributes?.['when'] || '',
+          label: r.label,
+        }))
+      : undefined;
+
     this.postMessage({
       type: 'updatePropertiesPanel',
       nodeId: msg.nodeId,
@@ -643,6 +708,8 @@ export class FlowVisualizerPanel {
       iconId,
       groups,
       currentValues: combinedAttributes,
+      isRouter,
+      routerRoutes,
       autocompleteContext,
     });
   }
@@ -779,14 +846,19 @@ export class FlowVisualizerPanel {
    * Generic reader that walks a component's Node.body structure to extract
    * payload script, target variables, and child element values without regex re-scraping.
    */
-  public static extractComponentBody(node?: Node | null): {
+  public static extractComponentBody(
+    node?: Node | null,
+    currentDocUri?: vscode.Uri | null
+  ): {
     primaryScript?: string;
-    variables: Array<{ name: string; script: string }>;
+    attributesScript?: string;
+    variables: Array<{ name: string; script: string; resource?: string }>;
     childValues: Record<string, string>;
   } {
     const result: {
       primaryScript?: string;
-      variables: Array<{ name: string; script: string }>;
+      attributesScript?: string;
+      variables: Array<{ name: string; script: string; resource?: string }>;
       childValues: Record<string, string>;
     } = {
       variables: [],
@@ -801,6 +873,30 @@ export class FlowVisualizerPanel {
       result.primaryScript = node.text.trim();
     }
 
+    const loadDwlResource = (resPath: string): string => {
+      if (!currentDocUri || !resPath) return '';
+      try {
+        const fsPath = currentDocUri.fsPath;
+        const dir = path.dirname(fsPath);
+        // Try relative to XML file
+        const directCandidate = path.resolve(dir, resPath);
+        if (fs.existsSync(directCandidate)) {
+          return fs.readFileSync(directCandidate, 'utf-8');
+        }
+        // Try src/main/resources
+        const match = fsPath.match(/(.*?src[\\\/]main[\\\/])/i);
+        if (match) {
+          const resCandidate = path.resolve(match[1], 'resources', resPath);
+          if (fs.existsSync(resCandidate)) {
+            return fs.readFileSync(resCandidate, 'utf-8');
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load dwl resource:', resPath, err);
+      }
+      return '';
+    };
+
     const traverse = (elements: RawElement[]) => {
       for (const el of elements) {
         const local = (el.localName || '').toLowerCase();
@@ -812,16 +908,34 @@ export class FlowVisualizerPanel {
             el.attributes['name'] ||
             el.attributes['key'] ||
             'variable';
-          const script = el.text !== null && el.text !== undefined ? el.text.trim() : '';
-          result.variables.push({ name: varName, script });
+          const resource = el.attributes['resource'];
+          let script = el.text !== null && el.text !== undefined ? el.text.trim() : '';
+          if (!script && resource) {
+            script = loadDwlResource(resource);
+          }
+          result.variables.push({ name: varName, script, resource });
         }
         // 2. Primary payload script: <set-payload> or <payload>
         else if (local === 'set-payload' || local === 'payload') {
+          const resource = el.attributes['resource'];
           if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
             result.primaryScript = el.text.trim();
+          } else if (resource) {
+            const loaded = loadDwlResource(resource);
+            if (loaded) result.primaryScript = loaded;
           }
         }
-        // 3. Child elements with text/CDATA content
+        // 3. Attributes script: <set-attributes>
+        else if (local === 'set-attributes') {
+          const resource = el.attributes['resource'];
+          if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
+            result.attributesScript = el.text.trim();
+          } else if (resource) {
+            const loaded = loadDwlResource(resource);
+            if (loaded) result.attributesScript = loaded;
+          }
+        }
+        // 4. Child elements with text/CDATA content
         else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
           result.childValues[el.localName] = el.text.trim();
           if (!result.primaryScript && (local === 'sql' || local === 'body' || local === 'content')) {
@@ -1099,7 +1213,58 @@ export class FlowVisualizerPanel {
 
     const workspaceEdit = new vscode.WorkspaceEdit();
 
-    if (paramName === '__transform_payload__') {
+    if (paramName === '__transform_delete_var:' || paramName.startsWith('__transform_delete_var:')) {
+      const varName = paramName.slice('__transform_delete_var:'.length);
+      const varRegex = new RegExp(
+        `\\s*<([a-zA-Z0-9_-]+:)?set-variable\\b[^>]*variableName="${varName}"[^>]*>[\\s\\S]*?<\\/([a-zA-Z0-9_-]+:)?set-variable>|\\s*<([a-zA-Z0-9_-]+:)?set-variable\\b[^>]*variableName="${varName}"[^>]*\\/>`
+      );
+      const match = nodeText.match(varRegex);
+      if (match && match.index !== undefined) {
+        const startOffset = curDoc.offsetAt(nodeStartPos) + match.index;
+        const endOffset = startOffset + match[0].length;
+        workspaceEdit.delete(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)));
+      }
+    } else if (paramName === '__transform_delete_attributes__') {
+      const attrRegex = /\s*<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*>[\s\S]*?<\/([a-zA-Z0-9_-]+:)?set-attributes>|\s*<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*\/>/;
+      const match = nodeText.match(attrRegex);
+      if (match && match.index !== undefined) {
+        const startOffset = curDoc.offsetAt(nodeStartPos) + match.index;
+        const endOffset = startOffset + match[0].length;
+        workspaceEdit.delete(this.currentDocUri, new vscode.Range(curDoc.positionAt(startOffset), curDoc.positionAt(endOffset)));
+      }
+    } else if (paramName === '__transform_attributes__') {
+      const setAttrRegex = /<([a-zA-Z0-9_-]+:)?set-attributes\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-attributes>/;
+      const match = nodeText.match(setAttrRegex);
+      const prefix = nodeText.match(/<([a-zA-Z0-9_-]+):transform/)?.[1] || 'ee';
+
+      if (match && match.index !== undefined) {
+        const fullInner = match[2];
+        const innerOffset = match.index + match[0].indexOf(fullInner);
+        const cdataMatch = fullInner.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+        if (cdataMatch && cdataMatch.index !== undefined) {
+          const cdataStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset + cdataMatch.index + 9;
+          const cdataEndOffset = cdataStartOffset + cdataMatch[1].length;
+          workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(cdataStartOffset), curDoc.positionAt(cdataEndOffset)), newScript);
+        } else {
+          const innerStartOffset = curDoc.offsetAt(nodeStartPos) + innerOffset;
+          const innerEndOffset = innerStartOffset + fullInner.length;
+          workspaceEdit.replace(this.currentDocUri, new vscode.Range(curDoc.positionAt(innerStartOffset), curDoc.positionAt(innerEndOffset)), `<![CDATA[${newScript}]]>`);
+        }
+      } else {
+        const messageRegex = /<([a-zA-Z0-9_-]+:)?message\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?message>/;
+        const msgMatch = nodeText.match(messageRegex);
+        if (msgMatch && msgMatch.index !== undefined) {
+          const insertOffset = curDoc.offsetAt(nodeStartPos) + msgMatch.index + msgMatch[0].lastIndexOf('</');
+          workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(insertOffset), `\t<${prefix}:set-attributes><![CDATA[${newScript}]]></${prefix}:set-attributes>\n\t\t`);
+        } else {
+          const openTagMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?transform\b[^>]*>/);
+          if (openTagMatch && openTagMatch.index !== undefined) {
+            const insertOffset = curDoc.offsetAt(nodeStartPos) + openTagMatch.index + openTagMatch[0].length;
+            workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(insertOffset), `\n\t<${prefix}:message>\n\t\t<${prefix}:set-attributes><![CDATA[${newScript}]]></${prefix}:set-attributes>\n\t</${prefix}:message>`);
+          }
+        }
+      }
+    } else if (paramName === '__transform_payload__') {
       const setPayloadRegex = /<([a-zA-Z0-9_-]+:)?set-payload\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?set-payload>/;
       const match = nodeText.match(setPayloadRegex);
 
@@ -1237,16 +1402,109 @@ export class FlowVisualizerPanel {
     }
   }
 
+  private async handleAddChoiceRoute(nodeId: string): Promise<void> {
+    if (!this.currentDocUri || !this.lastModel) return;
+    const node = this.findNodeInModel(this.lastModel, nodeId);
+    if (!node) return;
+
+    const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+    const nodeStartPos = new vscode.Position(node.range.startLine, node.range.startCol);
+    const nodeEndPos = new vscode.Position(node.range.endLine, node.range.endCol);
+    const nodeText = curDoc.getText(new vscode.Range(nodeStartPos, nodeEndPos));
+
+    // Determine insertion position: before <otherwise> if exists, else before </choice>
+    const otherwiseMatch = nodeText.match(/<([a-zA-Z0-9_-]+:)?otherwise\b/);
+    const closeChoiceMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?choice>/);
+
+    const targetOffsetInNode = otherwiseMatch && otherwiseMatch.index !== undefined
+      ? otherwiseMatch.index
+      : (closeChoiceMatch && closeChoiceMatch.index !== undefined ? closeChoiceMatch.index : nodeText.length - 1);
+
+    const insertOffset = curDoc.offsetAt(nodeStartPos) + targetOffsetInNode;
+    const insertPos = curDoc.positionAt(insertOffset);
+
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    workspaceEdit.insert(this.currentDocUri, insertPos, `<when expression="#[true]">\n\t\t\t<!-- route -->\n\t\t</when>\n\t\t`);
+    const applied = await vscode.workspace.applyEdit(workspaceEdit);
+    if (applied) await curDoc.save();
+  }
+
+  private async handleDeleteRoute(routeId: string): Promise<void> {
+    if (!this.currentDocUri || !this.lastModel) return;
+    const node = this.findNodeInModel(this.lastModel, routeId);
+    if (!node) return;
+
+    const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+    const startPos = new vscode.Position(node.range.startLine, node.range.startCol);
+    const endPos = new vscode.Position(node.range.endLine, node.range.endCol);
+
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    workspaceEdit.delete(this.currentDocUri, new vscode.Range(startPos, endPos));
+    const applied = await vscode.workspace.applyEdit(workspaceEdit);
+    if (applied) await curDoc.save();
+  }
+
+  private async handleReorderChoiceRoutes(nodeId: string, fromIndex: number, toIndex: number): Promise<void> {
+    if (!this.currentDocUri || !this.lastModel) return;
+    const node = this.findNodeInModel(this.lastModel, nodeId);
+    if (!node || !node.routes || fromIndex < 0 || toIndex < 0 || fromIndex >= node.routes.length || toIndex >= node.routes.length) return;
+
+    const routeA = node.routes[fromIndex];
+    const routeB = node.routes[toIndex];
+    if (!routeA || !routeB) return;
+
+    const curDoc = await vscode.workspace.openTextDocument(this.currentDocUri);
+    const rangeA = new vscode.Range(
+      new vscode.Position(routeA.range.startLine, routeA.range.startCol),
+      new vscode.Position(routeA.range.endLine, routeA.range.endCol)
+    );
+    const rangeB = new vscode.Range(
+      new vscode.Position(routeB.range.startLine, routeB.range.startCol),
+      new vscode.Position(routeB.range.endLine, routeB.range.endCol)
+    );
+
+    const textA = curDoc.getText(rangeA);
+    const textB = curDoc.getText(rangeB);
+
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    workspaceEdit.replace(this.currentDocUri, rangeA, textB);
+    workspaceEdit.replace(this.currentDocUri, rangeB, textA);
+    const applied = await vscode.workspace.applyEdit(workspaceEdit);
+    if (applied) await curDoc.save();
+  }
+
   public static findNodeInModel(model: SemanticModel, id: string): Node | null {
-    const searchNode = (n: Node): Node | null => {
+    const routeToNode = (r: Route): Node => ({
+      id: r.id,
+      range: r.range,
+      attributes: r.attributes || {},
+      descriptor: r.descriptor || {
+        namespaceUri: MULE_CORE_NAMESPACE,
+        localName: r.kind,
+        kind: 'scope',
+        displayName: r.label,
+        iconId: r.kind.startsWith('on-error') ? 'core:on-error-propagate' : 'core:choice',
+        groups: [],
+      },
+      label: r.label,
+      subtitle: null,
+      chain: r.chain || [],
+      routes: [],
+      body: r.body,
+      collapsed: false,
+      diagnostics: [],
+    });
+
+    const searchNode = (n: Node, flowName: string): Node | null => {
       if (n.id === id) return n;
       for (const c of n.chain) {
-        const found = searchNode(c);
+        const found = searchNode(c, flowName);
         if (found) return found;
       }
       for (const r of n.routes) {
+        if (r.id === id) return routeToNode(r);
         for (const c of r.chain) {
-          const found = searchNode(c);
+          const found = searchNode(c, flowName);
           if (found) return found;
         }
       }
@@ -1254,22 +1512,23 @@ export class FlowVisualizerPanel {
     };
 
     for (const g of model.globalConfigs) {
-      const found = searchNode(g);
+      const found = searchNode(g, 'global');
       if (found) return found;
     }
 
     for (const flow of model.flows) {
       if (flow.source) {
-        const found = searchNode(flow.source);
+        const found = searchNode(flow.source, flow.name);
         if (found) return found;
       }
       for (const c of flow.chain) {
-        const found = searchNode(c);
+        const found = searchNode(c, flow.name);
         if (found) return found;
       }
       for (const r of flow.errorHandler) {
+        if (r.id === id) return routeToNode(r);
         for (const c of r.chain) {
-          const found = searchNode(c);
+          const found = searchNode(c, flow.name);
           if (found) return found;
         }
       }

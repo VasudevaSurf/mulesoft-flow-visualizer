@@ -11,6 +11,7 @@ export class WebviewHtmlBuilder {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'; font-src ${webview.cspSource} data:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mule Flow Visualizer</title>
   <style>
@@ -777,8 +778,8 @@ export class WebviewHtmlBuilder {
     }
     .dw-main-editor-wrapper {
       flex: 1;
-      min-height: 170px;
-      height: 200px;
+      min-height: 280px;
+      height: 340px;
       border: 1px solid var(--border);
       border-radius: 4px;
       overflow: hidden;
@@ -788,7 +789,127 @@ export class WebviewHtmlBuilder {
     .dw-monaco-editor {
       width: 100%;
       height: 100%;
-      min-height: 170px;
+      min-height: 280px;
+    }
+    .dw-targets-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      padding: 0 4px 6px 4px;
+      overflow-x: auto;
+    }
+    .dw-target-tab {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .dw-target-tab:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--fg);
+    }
+    .dw-target-tab.active {
+      background: var(--vscode-editor-background, #1e1e1e);
+      border-color: var(--border);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .dw-btn-delete-target {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .dw-btn-delete-target:hover {
+      color: #e53935;
+    }
+    .router-routes-section {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .router-routes-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .router-routes-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .router-route-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 8px;
+    }
+    .router-route-row:hover {
+      border-color: var(--tile-hover-border);
+    }
+    .router-route-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: rgba(0, 122, 204, 0.2);
+      color: var(--accent);
+      min-width: 50px;
+      text-align: center;
+    }
+    .router-route-badge.otherwise {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+    }
+    .router-route-expr {
+      flex: 1;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+    }
+    .router-route-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .router-action-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+    }
+    .router-action-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--fg);
+    }
+    .router-action-btn.delete:hover {
+      color: #e53935;
+      border-color: #e53935;
     }
     .dw-variables-section {
       background: rgba(255, 255, 255, 0.02);
@@ -1195,20 +1316,43 @@ export class WebviewHtmlBuilder {
 
     function updateTransform() {
       sceneRoot.setAttribute('transform', \`translate(\${panX}, \${panY}) scale(\${scale})\`);
+      const resetBtn = document.getElementById('btn-zoom-reset');
+      if (resetBtn) {
+        resetBtn.textContent = Math.round(scale * 100) + '%';
+      }
+    }
+
+    function zoomTo(newScale, focalX, focalY) {
+      newScale = Math.min(Math.max(0.15, newScale), 3);
+      if (newScale === scale) return;
+      panX = focalX - (focalX - panX) * (newScale / scale);
+      panY = focalY - (focalY - panY) * (newScale / scale);
+      scale = newScale;
+      updateTransform();
     }
 
     // Zoom and Pan Handlers
     viewport.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-      const mouseX = e.clientX - viewport.getBoundingClientRect().left;
-      const mouseY = e.clientY - viewport.getBoundingClientRect().top;
 
-      const newScale = Math.min(Math.max(0.15, scale * zoomFactor), 3);
-      panX = mouseX - (mouseX - panX) * (newScale / scale);
-      panY = mouseY - (mouseY - panY) * (newScale / scale);
-      scale = newScale;
-      updateTransform();
+      // Normalize delta across browsers and input devices (pixels, lines, pages)
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) {
+        delta *= 33; // DOM_DELTA_LINE to px
+      } else if (e.deltaMode === 2) {
+        delta *= 100; // DOM_DELTA_PAGE to px
+      }
+
+      // Clamp delta per event to avoid extreme spikes while staying responsive
+      const clampedDelta = Math.max(-160, Math.min(160, delta));
+      // Balanced, responsive zoom factor directly scaled to user action
+      const zoomFactor = Math.exp(-clampedDelta * 0.0016);
+
+      const vRect = viewport.getBoundingClientRect();
+      const mouseX = e.clientX - vRect.left;
+      const mouseY = e.clientY - vRect.top;
+
+      zoomTo(scale * zoomFactor, mouseX, mouseY);
     }, { passive: false });
 
     viewport.addEventListener('mousedown', (e) => {
@@ -1232,12 +1376,12 @@ export class WebviewHtmlBuilder {
     });
 
     document.getElementById('btn-zoom-in').onclick = () => {
-      scale = Math.min(3, scale * 1.2);
-      updateTransform();
+      const vRect = viewport.getBoundingClientRect();
+      zoomTo(scale * 1.2, vRect.width / 2, vRect.height / 2);
     };
     document.getElementById('btn-zoom-out').onclick = () => {
-      scale = Math.max(0.15, scale * 0.8);
-      updateTransform();
+      const vRect = viewport.getBoundingClientRect();
+      zoomTo(scale / 1.2, vRect.width / 2, vRect.height / 2);
     };
     document.getElementById('btn-zoom-reset').onclick = () => {
       scale = 1;
@@ -1306,6 +1450,23 @@ export class WebviewHtmlBuilder {
 
     function findNodeById(id) {
       if (!currentModel || !id) return null;
+      function routeToNode(r) {
+        return {
+          id: r.id,
+          range: r.range,
+          attributes: r.attributes || {},
+          descriptor: r.descriptor || {
+            namespaceUri: 'http://www.mulesoft.org/schema/mule/core',
+            localName: r.kind,
+            kind: 'scope',
+            displayName: r.label,
+            iconId: r.kind && r.kind.startsWith('on-error') ? 'core:on-error-propagate' : 'core:choice'
+          },
+          label: r.label,
+          chain: r.chain || []
+        };
+      }
+
       function searchNode(node) {
         if (!node) return null;
         if (node.id === id) return node;
@@ -1317,6 +1478,7 @@ export class WebviewHtmlBuilder {
         }
         if (node.routes) {
           for (const r of node.routes) {
+            if (r.id === id) return routeToNode(r);
             if (r.chain) {
               for (const c of r.chain) {
                 const found = searchNode(c);
@@ -1338,6 +1500,7 @@ export class WebviewHtmlBuilder {
         }
         if (f.errorHandler) {
           for (const r of f.errorHandler) {
+            if (r.id === id) return routeToNode(r);
             if (r.chain) {
               for (const c of r.chain) {
                 const found = searchNode(c);
@@ -1735,9 +1898,22 @@ export class WebviewHtmlBuilder {
           </g>
         \`;
 
-        if (!isErrCollapsed && flow.errorHandlers.length > 0) {
-          for (const ehRoute of flow.errorHandlers) {
-            html += renderRoute(ehRoute, false);
+        if (!isErrCollapsed) {
+          if (flow.flowModel.errorHandlerRef) {
+            const refY = flow.errorBandBox.y + 34;
+            const refX = flow.errorBandBox.x + 12;
+            const refW = Math.min(260, flow.errorBandBox.width - 24);
+            html += \`
+              <g class="tile-group" data-node-id="\${escapeHtml(flow.flowId + ':errorHandlerRef')}" style="cursor: pointer;" title="Global Error Handler Reference">
+                <rect class="tile-rect" x="\${refX}" y="\${refY}" width="\${refW}" height="30" rx="4" fill="rgba(229,57,53,0.08)" stroke="rgba(229,57,53,0.3)" stroke-dasharray="4 2" />
+                <text class="tile-title" x="\${refX + 10}" y="\${refY + 19}" font-size="11" fill="var(--fg-dim)">Reference: <tspan fill="var(--accent)" font-weight="600">\${escapeHtml(flow.flowModel.errorHandlerRef)}</tspan></text>
+              </g>
+            \`;
+          }
+          if (flow.errorHandlers.length > 0) {
+            for (const ehRoute of flow.errorHandlers) {
+              html += renderRoute(ehRoute, false);
+            }
           }
         }
       }
@@ -1889,10 +2065,12 @@ export class WebviewHtmlBuilder {
       // Route Label with max-width protection so it NEVER extends past route.width
       const maxChars = Math.max(12, Math.floor((route.width - 24) / 7));
       const displayLabel = truncate(route.route.label, maxChars);
+      const rangeStr = escapeHtml(JSON.stringify(route.route.range || { startLine: 0, startCol: 0, endLine: 0, endCol: 0 }));
 
       html += \`
-        <g class="route-label-group" title="\${escapeHtml(route.route.label)}">
-          <text class="container-header-title route-header-label" x="\${route.x + 6}" y="\${route.y + 14}">\${escapeHtml(displayLabel)}</text>
+        <g class="tile-group route-label-group" data-node-id="\${escapeHtml(route.routeId)}" data-range="\${rangeStr}" style="cursor: pointer;" title="\${escapeHtml(route.route.label)} (Click to view properties)">
+          <rect class="route-header-bg" x="\${route.x + 2}" y="\${route.y + 2}" width="\${Math.min(route.width - 4, maxChars * 8 + 16)}" height="20" rx="4" fill="rgba(255,255,255,0.06)" />
+          <text class="container-header-title route-header-label" x="\${route.x + 8}" y="\${route.y + 15}">\${escapeHtml(displayLabel)}</text>
         </g>
       \`;
 
@@ -1927,8 +2105,48 @@ export class WebviewHtmlBuilder {
         outputType: 'application/json'
       };
 
+      // Model for targets
+      const targets = [
+        { id: 'payload', label: 'Payload', type: 'payload', paramName: '__transform_payload__', script: transformData.script || '%dw 2.0\\noutput application/json\\n---\\n{\\n}', canDelete: false }
+      ];
+
+      if (transformData.attributesScript !== undefined) {
+        targets.push({ id: 'attributes', label: 'Attributes', type: 'attributes', paramName: '__transform_attributes__', script: transformData.attributesScript, canDelete: true });
+      }
+
+      if (transformData.targetVariables && transformData.targetVariables.length > 0) {
+        for (let i = 0; i < transformData.targetVariables.length; i++) {
+          const tv = transformData.targetVariables[i];
+          targets.push({ id: 'var:' + tv.name, label: 'vars.' + tv.name, type: 'variable', name: tv.name, paramName: '__transform_var:' + tv.name, script: tv.script || '%dw 2.0\\noutput application/java\\n---\\npayload', canDelete: true });
+        }
+      }
+
+      let activeTargetId = 'payload';
+
       const container = document.createElement('div');
       container.className = 'transform-editor-layout';
+
+      // Targets Bar (Tabs)
+      const targetsBar = document.createElement('div');
+      targetsBar.className = 'dw-targets-bar';
+
+      const targetsTabsContainer = document.createElement('div');
+      targetsTabsContainer.style.display = 'flex';
+      targetsTabsContainer.style.alignItems = 'center';
+      targetsTabsContainer.style.gap = '4px';
+      targetsTabsContainer.style.flex = '1';
+      targetsTabsContainer.style.overflowX = 'auto';
+
+      const btnAddTarget = document.createElement('button');
+      btnAddTarget.type = 'button';
+      btnAddTarget.className = 'prop-btn-add';
+      btnAddTarget.textContent = '+ Add Target';
+      btnAddTarget.style.fontSize = '11px';
+      btnAddTarget.style.padding = '3px 8px';
+
+      targetsBar.appendChild(targetsTabsContainer);
+      targetsBar.appendChild(btnAddTarget);
+      container.appendChild(targetsBar);
 
       // Header Bar: %dw 2.0 / output [select]
       const headerBar = document.createElement('div');
@@ -1950,20 +2168,10 @@ export class WebviewHtmlBuilder {
         '</select>';
 
       const outputSelect = leftDiv.querySelector('#dw-output-type');
-      if (outputSelect) {
-        outputSelect.value = transformData.outputType || 'application/json';
-        if (!outputSelect.value) {
-          const opt = document.createElement('option');
-          opt.value = transformData.outputType;
-          opt.textContent = transformData.outputType;
-          opt.selected = true;
-          outputSelect.appendChild(opt);
-        }
-      }
 
       const rightDiv = document.createElement('div');
       rightDiv.className = 'dw-header-right';
-      rightDiv.innerHTML = '<span class="dw-target-badge">Payload (Target: payload)</span>';
+      rightDiv.innerHTML = '<span class="dw-target-badge" id="dw-target-indicator">Payload (Target: payload)</span>';
 
       headerBar.appendChild(leftDiv);
       headerBar.appendChild(rightDiv);
@@ -1981,6 +2189,126 @@ export class WebviewHtmlBuilder {
       let mainEditor = null;
       let isProgrammaticChange = false;
 
+      function getActiveTarget() {
+        return targets.find(function(t) { return t.id === activeTargetId; }) || targets[0];
+      }
+
+      function updateHeaderForTarget(target) {
+        const indicator = rightDiv.querySelector('#dw-target-indicator');
+        if (indicator) {
+          if (target.type === 'payload') {
+            indicator.textContent = 'Payload (Target: payload)';
+          } else if (target.type === 'attributes') {
+            indicator.textContent = 'Attributes (Target: attributes)';
+          } else {
+            indicator.textContent = 'Variable (Target: ' + target.name + ')';
+          }
+        }
+        if (outputSelect) {
+          const match = target.script.match(/output\\s+([a-zA-Z0-9_\\-\\/]+)/);
+          const tType = match ? match[1] : (transformData.outputType || 'application/json');
+          outputSelect.value = tType;
+          if (!outputSelect.value) {
+            const opt = document.createElement('option');
+            opt.value = tType;
+            opt.textContent = tType;
+            opt.selected = true;
+            outputSelect.appendChild(opt);
+          }
+        }
+      }
+
+      function renderTargetTabs() {
+        targetsTabsContainer.innerHTML = '';
+        targets.forEach(function(target) {
+          const tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = 'dw-target-tab' + (target.id === activeTargetId ? ' active' : '');
+          tab.innerHTML = '<span>' + escapeHtml(target.label) + '</span>';
+
+          if (target.canDelete) {
+            const delBtn = document.createElement('span');
+            delBtn.className = 'dw-btn-delete-target';
+            delBtn.textContent = '✕';
+            delBtn.title = 'Remove target';
+            delBtn.onclick = function(e) {
+              e.stopPropagation();
+              if (confirm('Delete target ' + target.label + '?')) {
+                if (target.type === 'attributes') {
+                  sendParamUpdate(data.nodeId, '__transform_delete_attributes__', '', 'dataweave');
+                } else if (target.type === 'variable') {
+                  sendParamUpdate(data.nodeId, '__transform_delete_var:' + target.name, '', 'dataweave');
+                }
+                const idx = targets.indexOf(target);
+                if (idx !== -1) targets.splice(idx, 1);
+                if (activeTargetId === target.id) {
+                  switchTarget('payload');
+                } else {
+                  renderTargetTabs();
+                }
+              }
+            };
+            tab.appendChild(delBtn);
+          }
+
+          tab.onclick = function() {
+            switchTarget(target.id);
+          };
+
+          targetsTabsContainer.appendChild(tab);
+        });
+      }
+
+      function switchTarget(newTargetId) {
+        if (mainEditor) {
+          const curTarget = getActiveTarget();
+          curTarget.script = mainEditor.getValue();
+        }
+        activeTargetId = newTargetId;
+        const target = getActiveTarget();
+        renderTargetTabs();
+        updateHeaderForTarget(target);
+
+        if (mainEditor) {
+          isProgrammaticChange = true;
+          try {
+            mainEditor.setValue(target.script || '');
+          } finally {
+            isProgrammaticChange = false;
+          }
+          mainEditor.layout();
+        }
+      }
+
+      btnAddTarget.onclick = function() {
+        const choice = window.prompt('Enter new target variable name (or type "attributes" for Attributes target):', 'myVar');
+        if (!choice) return;
+        const trimmed = choice.trim();
+        if (!trimmed) return;
+
+        if (trimmed.toLowerCase() === 'attributes') {
+          if (targets.some(function(t) { return t.type === 'attributes'; })) {
+            switchTarget('attributes');
+            return;
+          }
+          const defaultAttrScript = '%dw 2.0\\noutput application/java\\n---\\n{\\n}';
+          targets.push({ id: 'attributes', label: 'Attributes', type: 'attributes', paramName: '__transform_attributes__', script: defaultAttrScript, canDelete: true });
+          switchTarget('attributes');
+          sendParamUpdate(data.nodeId, '__transform_attributes__', defaultAttrScript, 'dataweave');
+        } else {
+          const varName = trimmed.replace(/^vars\\./, '');
+          const existing = targets.find(function(t) { return t.type === 'variable' && t.name === varName; });
+          if (existing) {
+            switchTarget(existing.id);
+            return;
+          }
+          const defaultVarScript = '%dw 2.0\\noutput application/java\\n---\\npayload';
+          targets.push({ id: 'var:' + varName, label: 'vars.' + varName, type: 'variable', name: varName, paramName: '__transform_var:' + varName, script: defaultVarScript, canDelete: true });
+          switchTarget('var:' + varName);
+          sendParamUpdate(data.nodeId, '__transform_var:' + varName, defaultVarScript, 'dataweave');
+        }
+      };
+
       function createMainTransformEditor() {
         if (!window.monaco || !monacoLoaded) {
           monacoReadyQueue.push(createMainTransformEditor);
@@ -1994,8 +2322,9 @@ export class WebviewHtmlBuilder {
           return;
         }
 
+        const initialTarget = getActiveTarget();
         mainEditor = monaco.editor.create(editorHost, {
-          value: transformData.script || '',
+          value: initialTarget.script || '',
           language: 'dataweave',
           theme: getMonacoTheme(),
           automaticLayout: true,
@@ -2022,7 +2351,9 @@ export class WebviewHtmlBuilder {
           clearTimeout(scriptTimer);
           scriptTimer = setTimeout(function() {
             const raw = mainEditor.getValue();
-            sendParamUpdate(data.nodeId, '__transform_payload__', raw, 'dataweave');
+            const target = getActiveTarget();
+            target.script = raw;
+            sendParamUpdate(data.nodeId, target.paramName, raw, 'dataweave');
           }, 400);
         });
 
@@ -2058,90 +2389,18 @@ export class WebviewHtmlBuilder {
               isProgrammaticChange = false;
             }
 
-            // Return focus to Monaco editor so typing works immediately after dropdown selection
             mainEditor.focus();
-
-            sendParamUpdate(data.nodeId, '__transform_payload__', cur, 'dataweave');
+            const target = getActiveTarget();
+            target.script = cur;
+            sendParamUpdate(data.nodeId, target.paramName, cur, 'dataweave');
           }
         };
       }
 
-      // Target Variables Section
-      const varsSection = document.createElement('div');
-      varsSection.className = 'dw-variables-section';
-
-      const varsHeader = document.createElement('div');
-      varsHeader.className = 'dw-variables-header';
-      varsHeader.innerHTML = 
-        '<span>Target Variables (<span id="dw-var-count">' + (transformData.targetVariables ? transformData.targetVariables.length : 0) + '</span>)</span>' +
-        '<button type="button" class="prop-btn-add" id="dw-btn-add-var">+ Add Variable</button>';
-
-      const varsList = document.createElement('div');
-      varsList.className = 'dw-variables-list';
-
-      function addVariableRow(varName, varScript) {
-        const row = document.createElement('div');
-        row.className = 'dw-var-row';
-
-        const nameInp = document.createElement('input');
-        nameInp.type = 'text';
-        nameInp.className = 'prop-input dw-var-name';
-        nameInp.value = varName || '';
-        nameInp.placeholder = 'variableName';
-
-        const valInp = document.createElement('input');
-        valInp.type = 'text';
-        valInp.className = 'prop-input dw-var-val';
-        valInp.value = varScript || '';
-        valInp.placeholder = 'DataWeave expression or value...';
-
-        let vTimer;
-        valInp.oninput = function() {
-          clearTimeout(vTimer);
-          vTimer = setTimeout(function() {
-            if (nameInp.value.trim()) {
-              sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
-            }
-          }, 400);
-        };
-        valInp.onchange = function() {
-          clearTimeout(vTimer);
-          if (nameInp.value.trim()) {
-            sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
-          }
-        };
-
-        nameInp.onchange = function() {
-          if (nameInp.value.trim()) {
-            sendParamUpdate(data.nodeId, '__transform_var:' + nameInp.value.trim(), valInp.value, 'dataweave');
-          }
-        };
-
-        row.appendChild(nameInp);
-        row.appendChild(valInp);
-        varsList.appendChild(row);
-      }
-
-      if (transformData.targetVariables && transformData.targetVariables.length > 0) {
-        for (let i = 0; i < transformData.targetVariables.length; i++) {
-          const v = transformData.targetVariables[i];
-          addVariableRow(v.name, v.script);
-        }
-      }
-
-      varsHeader.querySelector('#dw-btn-add-var').onclick = function() {
-        const count = varsList.children.length + 1;
-        addVariableRow('variable' + count, '%dw 2.0\\noutput application/java\\n---\\npayload');
-        const countEl = varsHeader.querySelector('#dw-var-count');
-        if (countEl) countEl.textContent = String(varsList.children.length);
-      };
-
-      varsSection.appendChild(varsHeader);
-      varsSection.appendChild(varsList);
-      container.appendChild(varsSection);
+      renderTargetTabs();
+      updateHeaderForTarget(getActiveTarget());
 
       tabsContent.appendChild(container);
-
       createMainTransformEditor();
     }
 
@@ -2222,6 +2481,141 @@ export class WebviewHtmlBuilder {
 
         for (const param of group.parameters) {
           pane.appendChild(renderFormControl(param, data.currentValues));
+        }
+
+        // Router Branches Manager (When/Otherwise management)
+        if (idx === 0 && data.isRouter && data.routerRoutes && data.routerRoutes.length > 0) {
+          const routerSec = document.createElement('div');
+          routerSec.className = 'router-routes-section';
+
+          const rHeader = document.createElement('div');
+          rHeader.className = 'router-routes-header';
+          rHeader.innerHTML = '<span>Routing Branches</span><button type="button" class="prop-btn-add" id="btn-add-when">+ Add When</button>';
+
+          const addWhenBtn = rHeader.querySelector('#btn-add-when');
+          if (addWhenBtn) {
+            addWhenBtn.onclick = function() {
+              vscode.postMessage({
+                type: 'addChoiceRoute',
+                routerNodeId: data.nodeId,
+                expression: '#[payload != null]'
+              });
+            };
+          }
+
+          const rList = document.createElement('div');
+          rList.className = 'router-routes-list';
+
+          const whenRoutes = data.routerRoutes.filter(function(r) { return r.name === 'when'; });
+          const totalWhens = whenRoutes.length;
+
+          data.routerRoutes.forEach(function(r, rIdx) {
+            const row = document.createElement('div');
+            row.className = 'router-route-row';
+
+            const badge = document.createElement('span');
+            badge.className = 'router-route-badge' + (r.name === 'otherwise' ? ' otherwise' : '');
+            badge.textContent = r.name.toUpperCase();
+            row.appendChild(badge);
+
+            if (r.name === 'when') {
+              const exprInp = document.createElement('input');
+              exprInp.type = 'text';
+              exprInp.className = 'prop-input router-route-expr';
+              exprInp.value = r.expression || '';
+              exprInp.placeholder = 'Expression (e.g. #[payload != null])';
+
+              let eTimer;
+              exprInp.oninput = function() {
+                clearTimeout(eTimer);
+                eTimer = setTimeout(function() {
+                  sendParamUpdate(r.routeId, 'expression', exprInp.value, 'dataweave');
+                }, 400);
+              };
+              exprInp.onchange = function() {
+                clearTimeout(eTimer);
+                sendParamUpdate(r.routeId, 'expression', exprInp.value, 'dataweave');
+              };
+              row.appendChild(exprInp);
+
+              const actions = document.createElement('div');
+              actions.className = 'router-route-actions';
+
+              // Up button
+              const upBtn = document.createElement('button');
+              upBtn.type = 'button';
+              upBtn.className = 'router-action-btn';
+              upBtn.textContent = '▲';
+              upBtn.title = 'Move branch up';
+              if (rIdx === 0) {
+                upBtn.disabled = true;
+                upBtn.style.opacity = '0.3';
+              } else {
+                upBtn.onclick = function() {
+                  vscode.postMessage({
+                    type: 'reorderChoiceRoutes',
+                    routerNodeId: data.nodeId,
+                    routeIndex: rIdx,
+                    direction: 'up'
+                  });
+                };
+              }
+              actions.appendChild(upBtn);
+
+              // Down button
+              const downBtn = document.createElement('button');
+              downBtn.type = 'button';
+              downBtn.className = 'router-action-btn';
+              downBtn.textContent = '▼';
+              downBtn.title = 'Move branch down';
+              if (rIdx >= totalWhens - 1) {
+                downBtn.disabled = true;
+                downBtn.style.opacity = '0.3';
+              } else {
+                downBtn.onclick = function() {
+                  vscode.postMessage({
+                    type: 'reorderChoiceRoutes',
+                    routerNodeId: data.nodeId,
+                    routeIndex: rIdx,
+                    direction: 'down'
+                  });
+                };
+              }
+              actions.appendChild(downBtn);
+
+              // Delete button
+              const delBtn = document.createElement('button');
+              delBtn.type = 'button';
+              delBtn.className = 'router-action-btn delete';
+              delBtn.textContent = '✕';
+              delBtn.title = 'Delete when branch';
+              delBtn.onclick = function() {
+                if (confirm('Delete this When route branch?')) {
+                  vscode.postMessage({
+                    type: 'deleteRoute',
+                    routerNodeId: data.nodeId,
+                    routeId: r.routeId
+                  });
+                }
+              };
+              actions.appendChild(delBtn);
+
+              row.appendChild(actions);
+            } else {
+              const defLabel = document.createElement('span');
+              defLabel.className = 'router-route-expr';
+              defLabel.style.color = 'var(--text-muted)';
+              defLabel.style.fontStyle = 'italic';
+              defLabel.textContent = 'Default fallback route';
+              row.appendChild(defLabel);
+            }
+
+            rList.appendChild(row);
+          });
+
+          routerSec.appendChild(rHeader);
+          routerSec.appendChild(rList);
+          pane.appendChild(routerSec);
         }
 
         // Show Test Connection button ONLY when clicked node is a Configuration element and genuine test is available

@@ -101,6 +101,16 @@ class PlaceEngine {
                 height: errBandH,
             };
         }
+        else if (mFlow.flow.errorHandlerRef) {
+            const errBandY = bodyY + bodyH + 16;
+            const errBandH = constants_1.L.errorBandHeaderH + 38;
+            errorBandBox = {
+                x: flowX + constants_1.L.flowPad.left,
+                y: errBandY,
+                width: mFlow.w - constants_1.L.flowPad.left - constants_1.L.flowPad.right,
+                height: errBandH,
+            };
+        }
         return {
             flowId: mFlow.flow.id,
             flowModel: mFlow.flow,

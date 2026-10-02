@@ -295,6 +295,8 @@ export class MeasureEngine {
 
         errH = L.errorBandHeaderH + totalErrH + L.flowPad.bottom;
       }
+    } else if (flow.errorHandlerRef) {
+      errH = L.errorBandHeaderH + 38;
     }
 
     const flowTitleW = Math.ceil((flow.name ? flow.name.length * 8 : 0) + 200);

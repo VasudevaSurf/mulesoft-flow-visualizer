@@ -56,7 +56,10 @@ export class ExtensionCatalog {
     const key = `${ns}:${localName}`;
 
     // 1. Check core catalog
-    const coreMatch = CORE_CATALOG[key] || CORE_CATALOG[localName];
+    const coreMatch =
+      CORE_CATALOG[key] ||
+      (prefix ? CORE_CATALOG[`${prefix}:${localName}`] : undefined) ||
+      CORE_CATALOG[localName];
     if (coreMatch) {
       return coreMatch;
     }

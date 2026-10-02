@@ -13,8 +13,13 @@ export class WorkspaceScanner {
   public static isMuleXml(content: string): boolean {
     const trimmed = content.trim();
     // Quick regex check for <mule or <mule:mule with xml namespace
-    return /<([a-zA-Z0-9_-]+:)?mule[\s>]/.test(trimmed) &&
-      (trimmed.includes('http://www.mulesoft.org/schema/mule/core') || trimmed.includes('xmlns="http://www.mulesoft.org/schema/mule/core"'));
+    return (
+      /<([a-zA-Z0-9_-]+:)?mule[\s>]/.test(trimmed) &&
+      (trimmed.includes('http://www.mulesoft.org/schema/mule/core') ||
+        trimmed.includes('http://www.mulesoft.org/schema/mule/munit') ||
+        trimmed.includes('http://www.mulesoft.org/schema/mule/munit-tools') ||
+        trimmed.includes('xmlns="http://www.mulesoft.org/schema/mule/core"'))
+    );
   }
 
   /**

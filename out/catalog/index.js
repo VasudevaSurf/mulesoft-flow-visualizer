@@ -72,7 +72,9 @@ class ExtensionCatalog {
         const ns = namespaceUri || '';
         const key = `${ns}:${localName}`;
         // 1. Check core catalog
-        const coreMatch = coreCatalog_1.CORE_CATALOG[key] || coreCatalog_1.CORE_CATALOG[localName];
+        const coreMatch = coreCatalog_1.CORE_CATALOG[key] ||
+            (prefix ? coreCatalog_1.CORE_CATALOG[`${prefix}:${localName}`] : undefined) ||
+            coreCatalog_1.CORE_CATALOG[localName];
         if (coreMatch) {
             return coreMatch;
         }

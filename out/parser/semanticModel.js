@@ -15,7 +15,9 @@ class SemanticModelBuilder {
         if (root && root.children) {
             for (const child of root.children) {
                 const local = child.localName;
+                const pfx = (child.prefix || '').toLowerCase();
                 const ns = child.namespaceUri || '';
+                const isMunitNs = pfx === 'munit' || ns === 'http://www.mulesoft.org/schema/mule/munit' || ns.includes('munit');
                 if (local === 'flow') {
                     flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
                 }
@@ -24,6 +26,13 @@ class SemanticModelBuilder {
                 }
                 else if (local === 'error-handler' && (child.attributes['name'] || child.attributes['id'])) {
                     flows.push(this.buildGlobalErrorHandler(child, unresolvedNamespaces));
+                }
+                else if (isMunitNs && local === 'test') {
+                    // MUnit tests are flow-like constructs with behavior/execution/validation sections
+                    flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
+                }
+                else if (isMunitNs && (local === 'before-test' || local === 'after-test' || local === 'before-suite' || local === 'after-suite')) {
+                    flows.push(this.buildFlow(child, 'sub-flow', unresolvedNamespaces));
                 }
                 else {
                     // Global configs, connectors, properties
@@ -50,14 +59,29 @@ class SemanticModelBuilder {
             'logger', 'set-payload', 'set-variable', 'remove-variable',
             'transform', 'choice', 'scatter-gather', 'round-robin',
             'first-successful', 'flow-ref', 'async', 'try', 'until-successful',
-            'foreach', 'parallel-foreach', 'batch:job', 'batch:execute',
-            'raise-error', 'error-handler', 'on-error-propagate', 'on-error-continue',
-            'parse-template', 'load-static-resource', 'idempotent-message-validator'
+            'foreach', 'parallel-foreach', 'raise-error',
+            'error-handler', 'on-error-propagate', 'on-error-continue',
+            'parse-template', 'load-static-resource', 'idempotent-message-validator',
+            'cache', 'dynamic-evaluate', 'transactional',
+            // Batch
+            'batch:job', 'batch:execute', 'batch:step', 'batch:process-records',
+            'batch:on-complete', 'batch:input', 'batch:aggregator',
+            // MUnit
+            'munit:test', 'munit:behavior', 'munit:execution', 'munit:validation',
+            'munit:set-event', 'munit:before-test', 'munit:after-test',
+            'munit:before-suite', 'munit:after-suite',
+            'munit-tools:mock-when', 'munit-tools:assert-that', 'munit-tools:assert-equals',
+            'munit-tools:verify-call', 'munit-tools:spy', 'munit-tools:set-event'
         ]);
         if (coreNames.has(local) || coreNames.has(`${pfx}:${local}`)) {
             return true;
         }
         if (pfx === 'ee' && local === 'transform') {
+            return true;
+        }
+        // Common connector operation prefixes that are never sources
+        const knownOperationPrefixes = ['apikit', 'java', 'scripting', 'json', 'xml-module', 'compression', 'validation'];
+        if (knownOperationPrefixes.includes(pfx)) {
             return true;
         }
         // Common outbound operations that should never be treated as a source
@@ -71,6 +95,18 @@ class SemanticModelBuilder {
             local === 'publish' ||
             local === 'publish-consume' ||
             local === 'send' ||
+            local === 'invoke' ||
+            local === 'invoke-static' ||
+            local === 'new' ||
+            local === 'execute' ||
+            local === 'validate-schema' ||
+            local === 'is-true' ||
+            local === 'is-false' ||
+            local === 'is-not-null' ||
+            local === 'is-null' ||
+            local === 'matches-regex' ||
+            local === 'router' ||
+            local === 'console' ||
             (local === 'consume' && pfx === 'wsc')) {
             return true;
         }
@@ -104,11 +140,12 @@ class SemanticModelBuilder {
         let sourceNode = null;
         const chain = [];
         const errorHandler = [];
-        let errorHandlerRef = null;
+        let errorHandlerRef = flowEl.attributes['errorHandler-ref'] || flowEl.attributes['error-handler-ref'] || null;
         const children = flowEl.children || [];
         let childIndex = 0;
-        // For standard flow: check if first child is a Source
-        if (type === 'flow' && children.length > 0) {
+        const isMunit = (flowEl.prefix || '').toLowerCase() === 'munit' || (flowEl.namespaceUri || '').includes('munit');
+        // For standard flow: check if first child is a Source (MUnit tests don't have inbound sources)
+        if (type === 'flow' && !isMunit && children.length > 0) {
             const firstChild = children[0];
             const descriptor = catalog_1.ExtensionCatalog.resolveComponent(firstChild.namespaceUri, firstChild.localName, firstChild.prefix);
             if (this.isMessageSource(firstChild, descriptor)) {
@@ -124,7 +161,8 @@ class SemanticModelBuilder {
         for (let i = childIndex; i < children.length; i++) {
             const child = children[i];
             const local = child.localName;
-            if (type === 'flow' && local === 'error-handler') {
+            // Error handlers are supported in both flows AND sub-flows
+            if (local === 'error-handler') {
                 if (child.attributes['ref']) {
                     errorHandlerRef = child.attributes['ref'];
                 }
@@ -187,6 +225,7 @@ class SemanticModelBuilder {
         const kind = local === 'on-error-propagate' ? 'on-error-propagate' : 'on-error-continue';
         const prefix = local === 'on-error-propagate' ? 'ON ERROR PROPAGATE' : 'ON ERROR CONTINUE';
         const label = `${prefix} (${typeAttr})`;
+        const descriptor = catalog_1.ExtensionCatalog.resolveComponent(el.namespaceUri, el.localName, el.prefix);
         const chain = [];
         const consumed = new Set();
         for (let i = 0; i < el.children.length; i++) {
@@ -199,6 +238,8 @@ class SemanticModelBuilder {
             label,
             kind,
             chain,
+            attributes: el.attributes,
+            descriptor,
             body,
             range: el.range,
         };
@@ -249,11 +290,14 @@ class SemanticModelBuilder {
                             whenConsumed.add(child.children[c]);
                             routeChain.push(this.buildNode(child.children[c], flowName, `${path}/when[${whenIdx}]/chain[${c}]`, unresolvedNs));
                         }
+                        const whenDescriptor = catalog_1.ExtensionCatalog.resolveComponent(child.namespaceUri, child.localName, child.prefix);
                         routes.push({
                             id: (0, nodeId_1.generateNodeId)(child.attributes, flowName, `${path}/when[${whenIdx}]`),
                             label: routeLabel,
                             kind: 'when',
                             chain: routeChain,
+                            attributes: child.attributes,
+                            descriptor: whenDescriptor,
                             body: (child.children || []).filter((c) => !whenConsumed.has(c)),
                             range: child.range,
                         });
@@ -272,11 +316,14 @@ class SemanticModelBuilder {
                         otherwiseConsumed.add(otherwiseEl.children[c]);
                         routeChain.push(this.buildNode(otherwiseEl.children[c], flowName, `${path}/otherwise/chain[${c}]`, unresolvedNs));
                     }
+                    const otherwiseDescriptor = catalog_1.ExtensionCatalog.resolveComponent(otherwiseEl.namespaceUri, otherwiseEl.localName, otherwiseEl.prefix);
                     routes.push({
                         id: (0, nodeId_1.generateNodeId)(otherwiseEl.attributes, flowName, `${path}/otherwise`),
                         label: 'otherwise',
                         kind: 'otherwise',
                         chain: routeChain,
+                        attributes: otherwiseEl.attributes,
+                        descriptor: otherwiseDescriptor,
                         body: (otherwiseEl.children || []).filter((c) => !otherwiseConsumed.has(c)),
                         range: otherwiseEl.range,
                     });
@@ -299,11 +346,14 @@ class SemanticModelBuilder {
                     else {
                         routeChain.push(this.buildNode(child, flowName, `${path}/route[${r}]/chain[0]`, unresolvedNs));
                     }
+                    const routeDescriptor = catalog_1.ExtensionCatalog.resolveComponent(child.namespaceUri, child.localName, child.prefix);
                     routes.push({
                         id: (0, nodeId_1.generateNodeId)(child.attributes, flowName, `${path}/route[${r}]`),
-                        label: `Route ${r + 1}`,
+                        label: child.attributes['doc:name'] || `Route ${r + 1}`,
                         kind: 'route',
                         chain: routeChain,
+                        attributes: child.attributes,
+                        descriptor: routeDescriptor,
                         body: (child.children || []).filter((c) => !routeConsumed.has(c)),
                         range: child.range,
                     });

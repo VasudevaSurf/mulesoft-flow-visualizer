@@ -116,6 +116,15 @@ export class PlaceEngine {
         width: mFlow.w - L.flowPad.left - L.flowPad.right,
         height: errBandH,
       };
+    } else if (mFlow.flow.errorHandlerRef) {
+      const errBandY = bodyY + bodyH + 16;
+      const errBandH = L.errorBandHeaderH + 38;
+      errorBandBox = {
+        x: flowX + L.flowPad.left,
+        y: errBandY,
+        width: mFlow.w - L.flowPad.left - L.flowPad.right,
+        height: errBandH,
+      };
     }
 
     return {

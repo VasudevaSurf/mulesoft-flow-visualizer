@@ -65,6 +65,10 @@ export interface Route {
     label: string;
     kind: 'when' | 'otherwise' | 'route' | 'on-error-propagate' | 'on-error-continue';
     chain: Node[];
+    /** XML attributes of this route element (expression, type, when, etc.). */
+    attributes: Record<string, string>;
+    /** Catalog descriptor for this route element, if available. */
+    descriptor?: ComponentDescriptor;
     /** Real nested XML child elements not represented as flow-processing chain entries. */
     body?: RawElement[];
     range: SourceRange;

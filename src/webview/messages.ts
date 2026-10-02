@@ -24,9 +24,12 @@ export type HostToWebviewMessage =
       isTransform?: boolean;
       transformData?: {
         script: string;
-        targetVariables: Array<{ name: string; script: string }>;
+        attributesScript?: string;
+        targetVariables: Array<{ name: string; script: string; resource?: string }>;
         outputType?: string;
       };
+      isRouter?: boolean;
+      routerRoutes?: Array<{ id: string; kind: string; expression?: string; label: string }>;
       autocompleteContext?: {
         variables: Array<{ name: string; type?: string }>;
         precedingPayloadShape?: {
@@ -86,4 +89,18 @@ export type WebviewToHostMessage =
       paramName: string;
       value: any;
       dataType?: string;
+    }
+  | {
+      type: 'addChoiceRoute';
+      nodeId: string;
+    }
+  | {
+      type: 'deleteRoute';
+      routeId: string;
+    }
+  | {
+      type: 'reorderChoiceRoutes';
+      nodeId: string;
+      fromIndex: number;
+      toIndex: number;
     };

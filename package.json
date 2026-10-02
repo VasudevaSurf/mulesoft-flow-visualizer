@@ -3,7 +3,7 @@
   "displayName": "MuleSoft Multi-Flow Visualizer",
   "description": "Renders a unified, stacked visual canvas of all flows, sub-flows, and error handlers in a Mule XML file — just like Anypoint Studio.",
   "version": "1.0.2",
-  "publisher": "vasudev-mule",
+  "publisher": "vasudeva-mulesoft",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -152,10 +152,11 @@
     "pretest": "npm run compile",
     "test": "node ./out/test/runTest.js",
     "package": "vsce package --allow-star-activation",
-    "install-ext": "npx @vscode/vsce package --allow-star-activation && code --install-extension mulesoft-flow-visualizer-1.0.1.vsix --force",
+    "install-ext": "npx @vscode/vsce package --allow-star-activation && code --install-extension mulesoft-flow-visualizer-1.0.2.vsix --force",
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
@@ -166,7 +167,6 @@
     "typescript": "^5.3.0"
   },
   "dependencies": {
-    "@types/jszip": "^3.4.0",
     "fast-xml-parser": "^4.3.4",
     "jszip": "^3.10.1",
     "monaco-editor": "^0.57.0",

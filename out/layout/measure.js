@@ -232,6 +232,9 @@ class MeasureEngine {
                 errH = constants_1.L.errorBandHeaderH + totalErrH + constants_1.L.flowPad.bottom;
             }
         }
+        else if (flow.errorHandlerRef) {
+            errH = constants_1.L.errorBandHeaderH + 38;
+        }
         const flowTitleW = Math.ceil((flow.name ? flow.name.length * 8 : 0) + 200);
         const contentW = constants_1.L.flowPad.left + sourceW + Math.max(processInner.w, constants_1.L.emptyPlaceholder.w) + constants_1.L.flowPad.right;
         const totalW = Math.max(contentW, flowTitleW + constants_1.L.flowPad.right + 24);

@@ -9,12 +9,20 @@
  * - mule-batch.xsd (Batch processing schemas)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CORE_CATALOG = exports.MULE_HTTP_NAMESPACE = exports.MULE_VALIDATION_NAMESPACE = exports.MULE_BATCH_NAMESPACE = exports.MULE_EE_NAMESPACE = exports.MULE_CORE_NAMESPACE = void 0;
+exports.CORE_CATALOG = exports.MULE_JAVA_NAMESPACE = exports.MULE_SCRIPTING_NAMESPACE = exports.MULE_XML_NAMESPACE = exports.MULE_JSON_NAMESPACE = exports.MULE_APIKIT_NAMESPACE = exports.MULE_COMPRESSION_NAMESPACE = exports.MULE_MUNIT_TOOLS_NAMESPACE = exports.MULE_MUNIT_NAMESPACE = exports.MULE_HTTP_NAMESPACE = exports.MULE_VALIDATION_NAMESPACE = exports.MULE_BATCH_NAMESPACE = exports.MULE_EE_NAMESPACE = exports.MULE_CORE_NAMESPACE = void 0;
 exports.MULE_CORE_NAMESPACE = "http://www.mulesoft.org/schema/mule/core";
 exports.MULE_EE_NAMESPACE = "http://www.mulesoft.org/schema/mule/ee/core";
 exports.MULE_BATCH_NAMESPACE = "http://www.mulesoft.org/schema/mule/batch";
 exports.MULE_VALIDATION_NAMESPACE = "http://www.mulesoft.org/schema/mule/validation";
 exports.MULE_HTTP_NAMESPACE = "http://www.mulesoft.org/schema/mule/http";
+exports.MULE_MUNIT_NAMESPACE = "http://www.mulesoft.org/schema/mule/munit";
+exports.MULE_MUNIT_TOOLS_NAMESPACE = "http://www.mulesoft.org/schema/mule/munit-tools";
+exports.MULE_COMPRESSION_NAMESPACE = "http://www.mulesoft.org/schema/mule/compression";
+exports.MULE_APIKIT_NAMESPACE = "http://www.mulesoft.org/schema/mule/mule-apikit";
+exports.MULE_JSON_NAMESPACE = "http://www.mulesoft.org/schema/mule/json";
+exports.MULE_XML_NAMESPACE = "http://www.mulesoft.org/schema/mule/xml-module";
+exports.MULE_SCRIPTING_NAMESPACE = "http://www.mulesoft.org/schema/mule/scripting";
+exports.MULE_JAVA_NAMESPACE = "http://www.mulesoft.org/schema/mule/java";
 exports.CORE_CATALOG = {
     // ── Containers ───────────────────────────────────────────────────────────────
     "flow": {
@@ -904,10 +912,9 @@ exports.CORE_CATALOG = {
     "batch:process-records": {
         namespaceUri: exports.MULE_BATCH_NAMESPACE,
         localName: "process-records",
-        kind: "router",
+        kind: "scope",
         displayName: "Process Records",
         iconId: "core:batch-step",
-        routeElementNames: ["step", "batch:step"],
         groups: [
             {
                 name: "General",
@@ -1785,6 +1792,501 @@ exports.CORE_CATALOG = {
                         isReference: false,
                         expressionSupport: "NOT_SUPPORTED"
                     }
+                ]
+            }
+        ]
+    },
+    // ── Missing Core Components ────────────────────────────────────────────────
+    "parse-template": {
+        namespaceUri: exports.MULE_CORE_NAMESPACE,
+        localName: "parse-template",
+        kind: "operation",
+        displayName: "Parse Template",
+        iconId: "core:parse-template",
+        subtitleAttribute: "location",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "location", label: "Location", description: "The location of the template file.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "content", label: "Content", description: "The template content to parse (alternative to location).", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "outputMimeType", label: "Output MIME Type", description: "The MIME type of the payload that this operation outputs.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "target", label: "Target Variable", description: "Variable on which the operation output will be placed.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "dynamic-evaluate": {
+        namespaceUri: exports.MULE_CORE_NAMESPACE,
+        localName: "dynamic-evaluate",
+        kind: "operation",
+        displayName: "Dynamic Evaluate",
+        iconId: "core:dynamic-evaluate",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "expression", label: "Expression", description: "The DataWeave expression to evaluate dynamically.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "target", label: "Target Variable", description: "Variable on which the operation output will be placed.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "idempotent-message-validator": {
+        namespaceUri: exports.MULE_CORE_NAMESPACE,
+        localName: "idempotent-message-validator",
+        kind: "operation",
+        displayName: "Idempotent Message Validator",
+        iconId: "core:idempotent-message-validator",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "idExpression", label: "ID Expression", description: "The expression to use to generate the unique identifier for a message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultValue: "#[correlationId]" },
+                    { name: "valueExpression", label: "Value Expression", description: "The expression to use for the value stored in the object store.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "storePrefix", label: "Store Prefix", description: "Prefix for keys in the object store.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "objectStore-ref", label: "Object Store", description: "Reference to a custom object store.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: true, referenceType: "configuration" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "transactional": {
+        namespaceUri: exports.MULE_CORE_NAMESPACE,
+        localName: "transactional",
+        kind: "scope",
+        displayName: "Transactional",
+        iconId: "core:try",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "transactionalAction", label: "Transactional Action", description: "The type of joining action that operations can take for transactions.", dataType: "enum", required: false, defaultValue: "INDIFFERENT", allowedValues: ["ALWAYS_BEGIN", "BEGIN_OR_JOIN", "INDIFFERENT", "ALWAYS_JOIN", "JOIN_IF_POSSIBLE", "NOT_SUPPORTED"], group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── Batch (additional entries) ──────────────────────────────────────────────
+    "batch:input": {
+        namespaceUri: exports.MULE_BATCH_NAMESPACE,
+        localName: "input",
+        kind: "scope",
+        displayName: "Batch Input",
+        iconId: "core:batch-job",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "batch:aggregator": {
+        namespaceUri: exports.MULE_BATCH_NAMESPACE,
+        localName: "aggregator",
+        kind: "scope",
+        displayName: "Batch Aggregator",
+        iconId: "core:batch-step",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "size", label: "Aggregator Size", description: "Number of records to aggregate.", dataType: "number", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "streaming", label: "Streaming", description: "Enable streaming processing of records.", dataType: "boolean", required: false, defaultValue: "false", group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "batch:execute": {
+        namespaceUri: exports.MULE_BATCH_NAMESPACE,
+        localName: "execute",
+        kind: "operation",
+        displayName: "Batch Execute",
+        iconId: "core:batch-job",
+        subtitleAttribute: "name",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "name", label: "Batch Job Name", description: "The name of the batch job to execute.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── MUnit ──────────────────────────────────────────────────────────────────
+    "munit:test": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "test",
+        kind: "flow",
+        displayName: "MUnit Test",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "name", label: "Test Name", description: "The name of the test.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "description", label: "Description", description: "Test description.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "expectedErrorType", label: "Expected Error Type", description: "Expected error type to succeed.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "expectException", label: "Expect Exception", description: "Whether this test expects an exception.", dataType: "boolean", required: false, defaultValue: "false", group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "ignore", label: "Ignore", description: "If true, skip this test.", dataType: "boolean", required: false, defaultValue: "false", group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "tags", label: "Tags", description: "Comma-separated list of tags for this test.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit:behavior": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "behavior",
+        kind: "scope",
+        displayName: "Behavior",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:execution": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "execution",
+        kind: "scope",
+        displayName: "Execution",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:validation": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "validation",
+        kind: "scope",
+        displayName: "Validation",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:set-event": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "set-event",
+        kind: "operation",
+        displayName: "Set Event",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:before-test": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "before-test",
+        kind: "sub-flow",
+        displayName: "Before Test",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "name", label: "Name", description: "Name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }, { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:after-test": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "after-test",
+        kind: "sub-flow",
+        displayName: "After Test",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "name", label: "Name", description: "Name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }, { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:before-suite": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "before-suite",
+        kind: "sub-flow",
+        displayName: "Before Suite",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "name", label: "Name", description: "Name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }, { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    "munit:after-suite": {
+        namespaceUri: exports.MULE_MUNIT_NAMESPACE,
+        localName: "after-suite",
+        kind: "sub-flow",
+        displayName: "After Suite",
+        iconId: "core:munit-test",
+        groups: [{ name: "General", parameters: [{ name: "name", label: "Name", description: "Name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }, { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+    },
+    // ── MUnit Tools ────────────────────────────────────────────────────────────
+    "munit-tools:mock-when": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "mock-when",
+        kind: "operation",
+        displayName: "Mock When",
+        iconId: "core:munit-test",
+        subtitleAttribute: "processor",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "processor", label: "Processor", description: "The processor name to mock.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:assert-that": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "assert-that",
+        kind: "operation",
+        displayName: "Assert That",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "expression", label: "Expression", description: "Expression to evaluate.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "is", label: "Is (Matcher)", description: "Hamcrest matcher expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "message", label: "Message", description: "Assertion failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:assert-equals": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "assert-equals",
+        kind: "operation",
+        displayName: "Assert Equals",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "actual", label: "Actual", description: "Actual value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "expected", label: "Expected", description: "Expected value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "message", label: "Message", description: "Failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:verify-call": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "verify-call",
+        kind: "operation",
+        displayName: "Verify Call",
+        iconId: "core:munit-test",
+        subtitleAttribute: "processor",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "processor", label: "Processor", description: "The processor to verify was called.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "times", label: "Times", description: "Expected number of invocations.", dataType: "number", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "atLeast", label: "At Least", description: "Minimum expected invocations.", dataType: "number", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "atMost", label: "At Most", description: "Maximum expected invocations.", dataType: "number", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:spy": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "spy",
+        kind: "operation",
+        displayName: "Spy",
+        iconId: "core:munit-test",
+        subtitleAttribute: "processor",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "processor", label: "Processor", description: "The processor to spy on.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── EE Cache Alias ────────────────────────────────────────────────────────
+    "ee:cache": {
+        namespaceUri: exports.MULE_EE_NAMESPACE,
+        localName: "cache",
+        kind: "scope",
+        displayName: "Cache",
+        iconId: "core:cache",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "cachingStrategy-ref", label: "Caching Strategy Reference", description: "Reference to the caching strategy object.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: true, referenceType: "configuration", expressionSupport: "NOT_SUPPORTED" },
+                    { name: "filterExpression", label: "Filter Expression", description: "The expression used to filter which messages should be processed.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── Compression ───────────────────────────────────────────────────────────
+    "compression:compress": {
+        namespaceUri: exports.MULE_COMPRESSION_NAMESPACE,
+        localName: "compress",
+        kind: "operation",
+        displayName: "Compress",
+        iconId: "core:transform",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "target", label: "Target Variable", description: "The name of a variable on which the operation's output will be placed.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "compression:decompress": {
+        namespaceUri: exports.MULE_COMPRESSION_NAMESPACE,
+        localName: "decompress",
+        kind: "operation",
+        displayName: "Decompress",
+        iconId: "core:transform",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "target", label: "Target Variable", description: "The name of a variable on which the operation's output will be placed.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── APIkit ────────────────────────────────────────────────────────────────
+    "apikit:router": {
+        namespaceUri: exports.MULE_APIKIT_NAMESPACE,
+        localName: "router",
+        kind: "operation",
+        displayName: "APIkit Router",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "config-ref",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "config-ref", label: "Router Configuration", description: "Reference to an APIkit configuration.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: true, referenceType: "configuration", expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "apikit:console": {
+        namespaceUri: exports.MULE_APIKIT_NAMESPACE,
+        localName: "console",
+        kind: "operation",
+        displayName: "APIkit Console",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "config-ref",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "config-ref", label: "Router Configuration", description: "Reference to an APIkit configuration.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: true, referenceType: "configuration", expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── JSON & XML Modules ────────────────────────────────────────────────────
+    "json:validate-schema": {
+        namespaceUri: exports.MULE_JSON_NAMESPACE,
+        localName: "validate-schema",
+        kind: "operation",
+        displayName: "Validate JSON Schema",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "schema",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "schema", label: "Schema Location", description: "The schema to validate against.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "xml-module:validate-schema": {
+        namespaceUri: exports.MULE_XML_NAMESPACE,
+        localName: "validate-schema",
+        kind: "operation",
+        displayName: "Validate XML Schema",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "schemas",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "schemas", label: "Schemas", description: "The schemas to validate against.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    // ── Scripting & Java ──────────────────────────────────────────────────────
+    "scripting:execute": {
+        namespaceUri: exports.MULE_SCRIPTING_NAMESPACE,
+        localName: "execute",
+        kind: "operation",
+        displayName: "Execute Script",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "engine",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "engine", label: "Engine", description: "Script engine to use (e.g. groovy, nashorn, python).", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "target", label: "Target Variable", description: "Target variable.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "java:invoke": {
+        namespaceUri: exports.MULE_JAVA_NAMESPACE,
+        localName: "invoke",
+        kind: "operation",
+        displayName: "Java Invoke",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "method",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "class", label: "Class", description: "Fully qualified Java class name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "method", label: "Method", description: "Name of the method to invoke.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "instance", label: "Instance", description: "Java instance to invoke the method on.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "java:invoke-static": {
+        namespaceUri: exports.MULE_JAVA_NAMESPACE,
+        localName: "invoke-static",
+        kind: "operation",
+        displayName: "Java Invoke Static",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "method",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "class", label: "Class", description: "Fully qualified Java class name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "method", label: "Method", description: "Name of static method.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "java:new": {
+        namespaceUri: exports.MULE_JAVA_NAMESPACE,
+        localName: "new",
+        kind: "operation",
+        displayName: "Java New",
+        iconId: "core:flow-ref",
+        subtitleAttribute: "class",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "class", label: "Class", description: "Fully qualified Java class name.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "target", label: "Target Variable", description: "Target variable.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
                 ]
             }
         ]

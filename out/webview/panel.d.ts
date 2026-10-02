@@ -25,11 +25,13 @@ export declare class FlowVisualizerPanel {
      * Generic reader that walks a component's Node.body structure to extract
      * payload script, target variables, and child element values without regex re-scraping.
      */
-    static extractComponentBody(node?: Node | null): {
+    static extractComponentBody(node?: Node | null, currentDocUri?: vscode.Uri | null): {
         primaryScript?: string;
+        attributesScript?: string;
         variables: Array<{
             name: string;
             script: string;
+            resource?: string;
         }>;
         childValues: Record<string, string>;
     };
@@ -37,6 +39,9 @@ export declare class FlowVisualizerPanel {
     private handleUpdateParameterValue;
     private handleTransformScriptUpdate;
     private handleTestConnection;
+    private handleAddChoiceRoute;
+    private handleDeleteRoute;
+    private handleReorderChoiceRoutes;
     static findNodeInModel(model: SemanticModel, id: string): Node | null;
     findNodeInModel(model: SemanticModel, id: string): Node | null;
     private parseObjectKeys;
