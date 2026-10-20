@@ -14,46 +14,51 @@ class SemanticModelBuilder {
         const unresolvedNamespaces = new Set();
         if (root && root.children) {
             for (const child of root.children) {
-                const local = child.localName;
-                const pfx = (child.prefix || '').toLowerCase();
-                const ns = child.namespaceUri || '';
-                const isMunitNs = pfx === 'munit' || ns === 'http://www.mulesoft.org/schema/mule/munit' || ns.includes('munit');
-                if (local === 'flow') {
-                    flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
-                }
-                else if (local === 'sub-flow') {
-                    flows.push(this.buildFlow(child, 'sub-flow', unresolvedNamespaces));
-                }
-                else if (local === 'error-handler' && (child.attributes['name'] || child.attributes['id'] || child.attributes['doc:name'] || child.attributes['doc:id'])) {
-                    flows.push(this.buildGlobalErrorHandler(child, unresolvedNamespaces));
-                }
-                else if (isMunitNs && local === 'test') {
-                    flows.push(this.buildMunitTestFlow(child, unresolvedNamespaces));
-                }
-                else if (isMunitNs && (local === 'before-test' || local === 'after-test' || local === 'before-suite' || local === 'after-suite')) {
-                    flows.push(this.buildFlow(child, local, unresolvedNamespaces));
-                }
-                else if ((local === 'job' && (pfx === 'batch' || ns.includes('batch'))) || (pfx === 'batch' && local === 'job')) {
-                    const jobName = child.attributes['jobName'] || child.attributes['name'] || child.attributes['doc:name'] || 'Batch Job';
-                    const jobNode = this.buildBatchJobNode(child, jobName, 'job', unresolvedNamespaces);
-                    flows.push({
-                        id: child.attributes['doc:id'] || child.attributes['jobName'] || child.attributes['name'] || (0, nodeId_1.generateNodeId)(child.attributes, 'Batch_Job', 'job'),
-                        name: jobName,
-                        type: 'flow',
-                        source: null,
-                        chain: [jobNode],
-                        errorHandler: [],
-                        errorHandlerRef: null,
-                        range: child.range,
-                        collapsed: false,
-                    });
-                }
-                else {
-                    // Global configs, connectors, properties
-                    const node = this.buildNode(child, 'global', 'global', unresolvedNamespaces);
-                    if (node.descriptor.kind === 'global-config' || !local.endsWith('flow')) {
-                        globalConfigs.push(node);
+                try {
+                    const local = child.localName;
+                    const pfx = (child.prefix || '').toLowerCase();
+                    const ns = child.namespaceUri || '';
+                    const isMunitNs = pfx === 'munit' || ns === 'http://www.mulesoft.org/schema/mule/munit' || ns.includes('munit');
+                    if (local === 'flow') {
+                        flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
                     }
+                    else if (local === 'sub-flow') {
+                        flows.push(this.buildFlow(child, 'sub-flow', unresolvedNamespaces));
+                    }
+                    else if (local === 'error-handler' && (child.attributes['name'] || child.attributes['id'] || child.attributes['doc:name'] || child.attributes['doc:id'])) {
+                        flows.push(this.buildGlobalErrorHandler(child, unresolvedNamespaces));
+                    }
+                    else if (isMunitNs && local === 'test') {
+                        flows.push(this.buildMunitTestFlow(child, unresolvedNamespaces));
+                    }
+                    else if (isMunitNs && (local === 'before-test' || local === 'after-test' || local === 'before-suite' || local === 'after-suite')) {
+                        flows.push(this.buildFlow(child, local, unresolvedNamespaces));
+                    }
+                    else if ((local === 'job' && (pfx === 'batch' || ns.includes('batch'))) || (pfx === 'batch' && local === 'job')) {
+                        const jobName = child.attributes['jobName'] || child.attributes['name'] || child.attributes['doc:name'] || 'Batch Job';
+                        const jobNode = this.buildBatchJobNode(child, jobName, 'job', unresolvedNamespaces);
+                        flows.push({
+                            id: child.attributes['doc:id'] || child.attributes['jobName'] || child.attributes['name'] || (0, nodeId_1.generateNodeId)(child.attributes, 'Batch_Job', 'job'),
+                            name: jobName,
+                            type: 'flow',
+                            source: null,
+                            chain: [jobNode],
+                            errorHandler: [],
+                            errorHandlerRef: null,
+                            range: child.range,
+                            collapsed: false,
+                        });
+                    }
+                    else {
+                        // Global configs, connectors, properties
+                        const node = this.buildNode(child, 'global', 'global', unresolvedNamespaces);
+                        if (node.descriptor.kind === 'global-config' || !local.endsWith('flow')) {
+                            globalConfigs.push(node);
+                        }
+                    }
+                }
+                catch (childErr) {
+                    console.warn(`[SemanticModelBuilder] Skipped problematic child <${child.prefix ? child.prefix + ':' : ''}${child.localName}>:`, childErr);
                 }
             }
         }

@@ -185,6 +185,10 @@ export class FlowVisualizerPanel {
       }
 
       if (!root) {
+        this.postMessage({
+          type: 'showWarning',
+          message: `Unable to parse Mule XML: ${error || 'Malformed XML structure'}. Please check for syntax errors.`,
+        });
         return;
       }
 
@@ -270,6 +274,10 @@ export class FlowVisualizerPanel {
       });
     } catch (e: any) {
       console.error('Failed to update Mule Flow view:', e);
+      this.postMessage({
+        type: 'showWarning',
+        message: `Error rendering flow diagram: ${e?.message || e}`,
+      });
     }
   }
 

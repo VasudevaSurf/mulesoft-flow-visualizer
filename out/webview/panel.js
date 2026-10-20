@@ -163,6 +163,10 @@ class FlowVisualizerPanel {
                 });
             }
             if (!root) {
+                this.postMessage({
+                    type: 'showWarning',
+                    message: `Unable to parse Mule XML: ${error || 'Malformed XML structure'}. Please check for syntax errors.`,
+                });
                 return;
             }
             const model = semanticModel_1.SemanticModelBuilder.build(root, this.currentDocUri.fsPath);
@@ -240,6 +244,10 @@ class FlowVisualizerPanel {
         }
         catch (e) {
             console.error('Failed to update Mule Flow view:', e);
+            this.postMessage({
+                type: 'showWarning',
+                message: `Error rendering flow diagram: ${e?.message || e}`,
+            });
         }
     }
     async handleWebviewMessage(msg) {

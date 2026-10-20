@@ -12,11 +12,11 @@ class MuleXmlParser {
             return { root: null, error: null };
         }
         try {
-            const cleanXml = this.sanitizeAttributes(xmlContent);
+            const cleanXml = this.sanitizeXml(xmlContent);
             const { root, errors } = this.doParse(cleanXml);
             if (root) {
                 this.lastGoodResult = root;
-                return { root, error: null };
+                return { root, error: errors.length > 0 ? errors[0] : null };
             }
             return { root: this.lastGoodResult, error: errors.length > 0 ? errors[0] : 'Empty XML document' };
         }
@@ -29,16 +29,32 @@ class MuleXmlParser {
         }
     }
     /**
-     * Sanitizes unescaped '<' characters inside quoted attribute values (e.g. #[amount <= 0])
-     * without affecting XML tags.
+     * Sanitizes XML content before parsing with strict XML parser:
+     * - Preserves CDATA sections and comments without alteration
+     * - Sanitizes unescaped '<' inside quoted attribute values
+     * - Sanitizes unescaped '&' characters (e.g. '&&' in DataWeave expressions, '&' in URLs/doc:names)
      */
-    static sanitizeAttributes(xml) {
-        return xml.replace(/=("[^"]*"|'[^']*')/g, (match) => {
+    static sanitizeXml(xml) {
+        const preservedTokens = [];
+        // 1. Preserve CDATA sections and comments
+        let tokenized = xml.replace(/(<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->)/g, (match) => {
+            preservedTokens.push(match);
+            return `___PRESERVED_XML_TOKEN_${preservedTokens.length - 1}___`;
+        });
+        // 2. Sanitize unescaped '<' in attribute values (e.g. #[amount < 100])
+        tokenized = tokenized.replace(/=("[^"]*"|'[^']*')/g, (match) => {
             if (match.includes('<')) {
                 return match.replace(/</g, '&lt;');
             }
             return match;
         });
+        // 3. Sanitize unescaped '&' everywhere outside CDATA/comments (e.g. && in expressions, & in urls/labels)
+        tokenized = tokenized.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
+        // 4. Restore preserved CDATA and comments
+        if (preservedTokens.length > 0) {
+            tokenized = tokenized.replace(/___PRESERVED_XML_TOKEN_(\d+)___/g, (_, idx) => preservedTokens[Number(idx)]);
+        }
+        return tokenized;
     }
     static doParse(xmlContent) {
         const parser = new saxes_1.SaxesParser();
@@ -158,6 +174,35 @@ class MuleXmlParser {
         });
         parser.write(xmlContent);
         parser.close();
+        // Fault-tolerant recovery: if parser stopped due to an unclosed tag but stack has frames,
+        // unwind the stack so that any flows and components parsed up to the error are recovered.
+        if (!rootElement && stack.length > 0) {
+            while (stack.length > 1) {
+                const frame = stack.pop();
+                const element = {
+                    prefix: frame.prefix,
+                    localName: frame.localName,
+                    namespaceUri: frame.namespaceUri,
+                    attributes: frame.attributes,
+                    children: frame.children,
+                    range: frame.range,
+                    nameRange: frame.nameRange,
+                    text: frame.text ? (frame.text.trim().length > 0 ? frame.text.trim() : null) : null,
+                };
+                stack[stack.length - 1].children.push(element);
+            }
+            const rootFrame = stack.pop();
+            rootElement = {
+                prefix: rootFrame.prefix,
+                localName: rootFrame.localName,
+                namespaceUri: rootFrame.namespaceUri,
+                attributes: rootFrame.attributes,
+                children: rootFrame.children,
+                range: rootFrame.range,
+                nameRange: rootFrame.nameRange,
+                text: rootFrame.text ? (rootFrame.text.trim().length > 0 ? rootFrame.text.trim() : null) : null,
+            };
+        }
         return { root: rootElement, errors };
     }
 }

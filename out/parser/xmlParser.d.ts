@@ -10,10 +10,12 @@ export declare class MuleXmlParser {
         error: string | null;
     };
     /**
-     * Sanitizes unescaped '<' characters inside quoted attribute values (e.g. #[amount <= 0])
-     * without affecting XML tags.
+     * Sanitizes XML content before parsing with strict XML parser:
+     * - Preserves CDATA sections and comments without alteration
+     * - Sanitizes unescaped '<' inside quoted attribute values
+     * - Sanitizes unescaped '&' characters (e.g. '&&' in DataWeave expressions, '&' in URLs/doc:names)
      */
-    private static sanitizeAttributes;
+    static sanitizeXml(xml: string): string;
     private static doParse;
 }
 //# sourceMappingURL=xmlParser.d.ts.map

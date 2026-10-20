@@ -46,13 +46,19 @@ class WorkspaceScanner {
      * Checks if a file is a Mule XML file by checking for <mule root element.
      */
     static isMuleXml(content) {
+        if (!content || !content.trim()) {
+            return false;
+        }
         const trimmed = content.trim();
-        // Quick regex check for <mule or <mule:mule with xml namespace
-        return (/<([a-zA-Z0-9_-]+:)?mule[\s>]/.test(trimmed) &&
-            (trimmed.includes('http://www.mulesoft.org/schema/mule/core') ||
-                trimmed.includes('http://www.mulesoft.org/schema/mule/munit') ||
-                trimmed.includes('http://www.mulesoft.org/schema/mule/munit-tools') ||
-                trimmed.includes('xmlns="http://www.mulesoft.org/schema/mule/core"')));
+        // Check for <mule or <mule:mule opening tag (case-insensitive)
+        const hasMuleRoot = /<([a-zA-Z0-9_-]+:)?mule[\s>]/i.test(trimmed);
+        if (!hasMuleRoot) {
+            return false;
+        }
+        // Match MuleSoft schema namespaces (supports http, https, core, munit, apikit, ee, etc.)
+        // or presence of standard Mule flow/scope elements
+        return (trimmed.includes('mulesoft.org/schema/mule/') ||
+            /<([a-zA-Z0-9_-]+:)?(flow|sub-flow|error-handler|test)[\s>]/i.test(trimmed));
     }
     /**
      * Finds all Mule XML files in the workspace.
