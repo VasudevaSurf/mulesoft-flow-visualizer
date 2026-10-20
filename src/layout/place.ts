@@ -1,4 +1,4 @@
-import { Box, PositionedNode, PositionedRoute, PositionedFlow } from './types';
+import { Box, PositionedNode, PositionedRoute, PositionedFlow, PositionedMunitZones } from './types';
 import { MeasuredNode, MeasuredRoute, MeasuredChain, MeasuredFlow } from './measure';
 import { L } from './constants';
 
@@ -69,8 +69,83 @@ export class PlaceEngine {
       positionedSource = this.placeNode(mFlow.sourceMeasured, srcX, srcY, processLaneY);
     }
 
-    // Place process chain
-    const positionedChain = isGlobalEH ? [] : this.placeChain(mFlow.processChain, processX, processLaneY);
+    // Place process chain or MUnit zones
+    let positionedMunitZones: PositionedMunitZones | undefined;
+    let positionedChain: PositionedNode[] = [];
+
+    if (mFlow.munitZones) {
+      const zonesGap = 28;
+      const mBehav = mFlow.munitZones.behavior;
+      const mExec = mFlow.munitZones.execution;
+      const mValid = mFlow.munitZones.validation;
+
+      // 1. Behavior zone
+      const behavX = processX;
+      const behavY = bodyY;
+      const behavLaneY = bodyY + mBehav.laneY;
+      const behavChildren = mBehav.innerChain
+        ? this.placeChain(mBehav.innerChain, behavX + 16, behavLaneY)
+        : [];
+      const posBehavior: PositionedNode = {
+        nodeId: mBehav.node.id,
+        node: mBehav.node,
+        x: behavX,
+        y: behavY,
+        width: mBehav.w,
+        height: mBehav.h,
+        laneY: behavLaneY,
+        children: behavChildren,
+        routes: [],
+      };
+
+      // 2. Execution zone
+      const execX = behavX + mBehav.w + zonesGap;
+      const execY = bodyY;
+      const execLaneY = bodyY + mExec.laneY;
+      const execChildren = mExec.innerChain
+        ? this.placeChain(mExec.innerChain, execX + 16, execLaneY)
+        : [];
+      const posExecution: PositionedNode = {
+        nodeId: mExec.node.id,
+        node: mExec.node,
+        x: execX,
+        y: execY,
+        width: mExec.w,
+        height: mExec.h,
+        laneY: execLaneY,
+        children: execChildren,
+        routes: [],
+      };
+
+      // 3. Validation zone
+      const validX = execX + mExec.w + zonesGap;
+      const validY = bodyY;
+      const validLaneY = bodyY + mValid.laneY;
+      const validChildren = mValid.innerChain
+        ? this.placeChain(mValid.innerChain, validX + 16, validLaneY)
+        : [];
+      const posValidation: PositionedNode = {
+        nodeId: mValid.node.id,
+        node: mValid.node,
+        x: validX,
+        y: validY,
+        width: mValid.w,
+        height: mValid.h,
+        laneY: validLaneY,
+        children: validChildren,
+        routes: [],
+      };
+
+      positionedMunitZones = {
+        behavior: posBehavior,
+        execution: posExecution,
+        validation: posValidation,
+      };
+
+      positionedChain = [posBehavior, posExecution, posValidation];
+    } else {
+      positionedChain = isGlobalEH ? [] : this.placeChain(mFlow.processChain, processX, processLaneY);
+    }
 
     // Error band
     let errorBandBox: Box | null = null;
@@ -143,6 +218,7 @@ export class PlaceEngine {
       chain: positionedChain,
       errorHandlers: positionedErrorHandlers,
       errorCollapsed: mFlow.errorCollapsed,
+      munitZones: positionedMunitZones,
     };
   }
 
@@ -180,6 +256,134 @@ export class PlaceEngine {
     const positionedRoutes: PositionedRoute[] = [];
     let errorBandBox: Box | null = null;
     const positionedErrorHandlers: PositionedRoute[] = [];
+
+    if (mNode.batchZones) {
+      const jobX = nodeX;
+      const jobY = nodeY;
+      const zonesY = jobY + L.scopePad.top;
+      const interZoneGap = 28;
+
+      // 1. Place Input Zone
+      const inputX = jobX + L.scopePad.left;
+      const mInput = mNode.batchZones.input;
+      const posInputChain = mInput.innerChain
+        ? this.placeChain(mInput.innerChain, inputX + 16, zonesY + mInput.laneY)
+        : [];
+      const posInput: PositionedNode = {
+        nodeId: mInput.node.id,
+        node: mInput.node,
+        x: inputX,
+        y: zonesY,
+        width: mInput.w,
+        height: mInput.h,
+        laneY: zonesY + mInput.laneY,
+        children: posInputChain,
+        routes: [],
+      };
+
+      // 2. Place Process Records Zone
+      const procX = inputX + mInput.w + interZoneGap;
+      const mProc = mNode.batchZones.processRecords;
+      const posSteps: PositionedNode[] = [];
+      let stepCursorX = procX + 18;
+
+      if (mProc.innerChain && mProc.innerChain.items) {
+        for (const mStep of mProc.innerChain.items) {
+          const stepY = zonesY + 30 + 10;
+          const stepLaneY = zonesY + mStep.laneY;
+          const stepChainNodes = mStep.innerChain
+            ? this.placeChain(mStep.innerChain, stepCursorX + 16, stepLaneY)
+            : [];
+
+          let posAgg: PositionedNode | null = null;
+          if (mStep.aggregator) {
+            const mAgg = mStep.aggregator;
+            const lastStepNode = stepChainNodes.length > 0 ? stepChainNodes[stepChainNodes.length - 1] : null;
+            const aggX = lastStepNode ? (lastStepNode.x + lastStepNode.width + 16) : (stepCursorX + 16);
+            const aggY = stepY + 32;
+            const aggLaneY = aggY + mAgg.laneY;
+            const aggChainNodes = mAgg.innerChain
+              ? this.placeChain(mAgg.innerChain, aggX + 12, aggLaneY)
+              : [];
+
+            posAgg = {
+              nodeId: mAgg.node.id,
+              node: mAgg.node,
+              x: aggX,
+              y: aggY,
+              width: mAgg.w,
+              height: mAgg.h,
+              laneY: aggLaneY,
+              children: aggChainNodes,
+              routes: [],
+            };
+          }
+
+          const posStep: PositionedNode = {
+            nodeId: mStep.node.id,
+            node: mStep.node,
+            x: stepCursorX,
+            y: stepY,
+            width: mStep.w,
+            height: mStep.h,
+            laneY: stepLaneY,
+            children: stepChainNodes,
+            aggregator: posAgg,
+            routes: [],
+          };
+          posSteps.push(posStep);
+          stepCursorX += mStep.w + 24;
+        }
+      }
+
+      const posProcRecords: PositionedNode = {
+        nodeId: mProc.node.id,
+        node: mProc.node,
+        x: procX,
+        y: zonesY,
+        width: mProc.w,
+        height: mProc.h,
+        laneY: zonesY + mProc.laneY,
+        children: posSteps,
+        routes: [],
+      };
+
+      // 3. Place On Complete Zone
+      const onCompX = procX + mProc.w + interZoneGap;
+      const mOnComp = mNode.batchZones.onComplete;
+      const posOnCompChain = mOnComp.innerChain
+        ? this.placeChain(mOnComp.innerChain, onCompX + 16, zonesY + mOnComp.laneY)
+        : [];
+      const posOnComplete: PositionedNode = {
+        nodeId: mOnComp.node.id,
+        node: mOnComp.node,
+        x: onCompX,
+        y: zonesY,
+        width: mOnComp.w,
+        height: mOnComp.h,
+        laneY: zonesY + mOnComp.laneY,
+        children: posOnCompChain,
+        routes: [],
+      };
+
+      return {
+        nodeId: mNode.node.id,
+        node: mNode.node,
+        x: jobX,
+        y: jobY,
+        width: mNode.w,
+        height: mNode.h,
+        laneY: jobY + mNode.laneY,
+        children: [posInput, posProcRecords, posOnComplete],
+        routes: [],
+        batchZones: {
+          input: posInput,
+          processRecords: posProcRecords,
+          onComplete: posOnComplete,
+        },
+        collapsedBadgeCount: mNode.collapsedBadgeCount,
+      };
+    }
 
     // Scope: place inner chain
     if (mNode.innerChain) {

@@ -185,6 +185,14 @@ class FlowVisualizerPanel {
                 for (const child of node.chain) {
                     applyCollapseState(child);
                 }
+                if (node.aggregator) {
+                    applyCollapseState(node.aggregator);
+                }
+                if (node.batchZones) {
+                    applyCollapseState(node.batchZones.input);
+                    applyCollapseState(node.batchZones.processRecords);
+                    applyCollapseState(node.batchZones.onComplete);
+                }
                 for (const route of node.routes) {
                     for (const child of route.chain) {
                         applyCollapseState(child);
@@ -208,6 +216,11 @@ class FlowVisualizerPanel {
                 for (const child of f.chain) {
                     applyCollapseState(child);
                 }
+                if (f.munitZones) {
+                    applyCollapseState(f.munitZones.behavior);
+                    applyCollapseState(f.munitZones.execution);
+                    applyCollapseState(f.munitZones.validation);
+                }
                 for (const route of f.errorHandler) {
                     for (const child of route.chain) {
                         applyCollapseState(child);
@@ -229,10 +242,10 @@ class FlowVisualizerPanel {
             console.error('Failed to update Mule Flow view:', e);
         }
     }
-    handleWebviewMessage(msg) {
+    async handleWebviewMessage(msg) {
         switch (msg.type) {
             case 'ready':
-                this.updateView();
+                await this.updateView();
                 break;
             case 'revealXml':
                 this.revealXmlRange(msg.range, msg.focusEditor);
@@ -244,34 +257,34 @@ class FlowVisualizerPanel {
                 else {
                     this.collapsedNodeIds.add(msg.nodeId);
                 }
-                this.updateView();
+                await this.updateView();
                 break;
             case 'navigateFlowRef':
                 this.handleFlowRefNavigation(msg.flowName);
                 break;
             case 'exportScene':
-                this.handleExport(msg.format);
+                await this.handleExport(msg.format);
                 break;
             case 'showProperties':
-                this.handleShowProperties(msg);
+                await this.handleShowProperties(msg);
                 break;
             case 'createConfiguration':
-                this.handleCreateConfiguration(msg);
+                await this.handleCreateConfiguration(msg);
                 break;
             case 'updateConfigRef':
-                this.handleUpdateConfigRef(msg);
+                await this.handleUpdateConfigRef(msg);
                 break;
             case 'testConnection':
-                this.handleTestConnection(msg);
+                await this.handleTestConnection(msg);
                 break;
             case 'updateParameterValue':
-                this.handleUpdateParameterValue(msg);
+                await this.handleUpdateParameterValue(msg);
                 break;
             case 'addChoiceRoute':
-                this.handleAddChoiceRoute(msg.nodeId || msg.routerNodeId);
+                await this.handleAddChoiceRoute(msg.nodeId || msg.routerNodeId);
                 break;
             case 'deleteRoute':
-                this.handleDeleteRoute(msg.routeId);
+                await this.handleDeleteRoute(msg.routeId);
                 break;
             case 'reorderChoiceRoutes': {
                 const nodeId = msg.nodeId || msg.routerNodeId;
@@ -282,7 +295,7 @@ class FlowVisualizerPanel {
                     toIdx = msg.direction === 'up' ? fromIdx - 1 : fromIdx + 1;
                 }
                 if (nodeId && fromIdx !== undefined && toIdx !== undefined) {
-                    this.handleReorderChoiceRoutes(nodeId, fromIdx, toIdx);
+                    await this.handleReorderChoiceRoutes(nodeId, fromIdx, toIdx);
                 }
                 break;
             }
@@ -516,7 +529,7 @@ class FlowVisualizerPanel {
             }
         }
         // 2. Regular operations and message sources (Connection tab is NOT shown)
-        const componentModel = await catalog_1.ExtensionCatalog.getOperationOrSourceModel(msg.namespaceUri, msg.localName);
+        const componentModel = await catalog_1.ExtensionCatalog.getOperationOrSourceModel(msg.namespaceUri, msg.localName, msg.prefix);
         // Look up configuration model for this component
         const configInfo = await catalog_1.ExtensionCatalog.getConfigurationModelForComponent(msg.namespaceUri, msg.localName);
         let configOptions = [];
@@ -873,35 +886,72 @@ class FlowVisualizerPanel {
                     }
                     result.variables.push({ name: varName, script, resource });
                 }
-                // 2. Primary payload script: <set-payload> or <payload>
+                // 2. Primary payload script: <set-payload> or <payload> or <munit:payload>
                 else if (local === 'set-payload' || local === 'payload') {
                     result.hasPayload = true;
                     const resource = el.attributes['resource'];
+                    const valAttr = el.attributes['value'];
                     if (resource) {
                         result.payloadResource = resource;
                         result.primaryScript = FlowVisualizerPanel.loadDwlResource(resource, currentDocUri);
                     }
+                    else if (valAttr !== undefined && valAttr !== null) {
+                        result.childValues['payload'] = valAttr;
+                        if (!result.primaryScript)
+                            result.primaryScript = valAttr;
+                    }
                     else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
                         result.primaryScript = el.text.trim();
+                        result.childValues['payload'] = el.text.trim();
                     }
                     else {
                         result.primaryScript = '';
                     }
+                    if (el.attributes['mediaType'])
+                        result.childValues['mediaType'] = el.attributes['mediaType'];
+                    if (el.attributes['encoding'])
+                        result.childValues['encoding'] = el.attributes['encoding'];
                 }
-                // 3. Attributes script: <set-attributes>
+                // 3. Attributes script: <set-attributes> or <attributes> or <munit:attributes>
                 else if (local === 'set-attributes' || local === 'attributes') {
                     result.hasAttributes = true;
                     const resource = el.attributes['resource'];
+                    const valAttr = el.attributes['value'];
                     if (resource) {
                         result.attributesResource = resource;
                         result.attributesScript = FlowVisualizerPanel.loadDwlResource(resource, currentDocUri);
                     }
+                    else if (valAttr !== undefined && valAttr !== null) {
+                        result.childValues['attributes'] = valAttr;
+                        result.attributesScript = valAttr;
+                    }
                     else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
                         result.attributesScript = el.text.trim();
+                        result.childValues['attributes'] = el.text.trim();
                     }
                     else {
                         result.attributesScript = '';
                     }
+                }
+                else if (local === 'with-attributes') {
+                    if (el.attributes['where']) {
+                        result.childValues['where'] = el.attributes['where'];
+                    }
+                }
+                else if (local === 'with-attribute') {
+                    if (el.attributes['attributeName'])
+                        result.childValues['attributeName'] = el.attributes['attributeName'];
+                    if (el.attributes['whereValue']) {
+                        result.childValues['whereValue'] = el.attributes['whereValue'];
+                        if (!result.childValues['where'])
+                            result.childValues['where'] = el.attributes['whereValue'];
+                    }
+                }
+                else if (local === 'error') {
+                    if (el.attributes['typeId'])
+                        result.childValues['errorType'] = el.attributes['typeId'];
+                    else if (el.attributes['type'])
+                        result.childValues['errorType'] = el.attributes['type'];
                 }
                 // 4. Child elements with text/CDATA content
                 else if (el.text !== null && el.text !== undefined && el.text.trim().length > 0) {
@@ -1018,7 +1068,8 @@ class FlowVisualizerPanel {
         const workspaceEdit = new vscode.WorkspaceEdit();
         const escapedParam = msg.paramName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         let valToWrite = msg.value;
-        if ((msg.paramName === 'expression' || msg.paramName === 'when') && valToWrite !== null && valToWrite !== undefined) {
+        const isExprParam = msg.paramName === 'expression' || msg.paramName === 'when' || msg.paramName === 'actual' || msg.paramName === 'expected' || msg.paramName === 'is' || msg.paramName === 'where' || msg.paramName === 'whereValue' || msg.paramName === 'payload' || msg.paramName === 'attributes' || msg.paramName === 'value' || msg.paramName === 'defaultValue';
+        if (isExprParam && valToWrite !== null && valToWrite !== undefined) {
             let strVal = String(valToWrite).trim();
             if (strVal) {
                 if (!strVal.startsWith('#[')) {
@@ -1029,6 +1080,14 @@ class FlowVisualizerPanel {
                 }
                 valToWrite = strVal;
             }
+        }
+        // Handle MUnit child elements (<munit:payload>, <munit:attributes>, <munit-tools:then-return>, <munit-tools:with-attributes>)
+        const handledMunit = await this.handleMunitChildElementUpdate(targetNode, curDoc, nodeStartPos, nodeText, msg.paramName, valToWrite);
+        if (handledMunit) {
+            if (targetNode.attributes) {
+                targetNode.attributes[msg.paramName] = String(valToWrite);
+            }
+            return;
         }
         // 1. Check if the attribute already exists on the opening tag
         const attrRegex = new RegExp(`\\b${escapedParam}\\s*=\\s*("[^"]*"|'[^']*')`);
@@ -1509,6 +1568,260 @@ class FlowVisualizerPanel {
         if (applied)
             await curDoc.save();
     }
+    async handleMunitChildElementUpdate(node, curDoc, nodeStartPos, nodeText, paramName, valToWrite) {
+        const local = node.descriptor?.localName;
+        if (local !== 'set-event' && local !== 'mock-when') {
+            return false;
+        }
+        const isSetEvent = local === 'set-event';
+        const isMockWhen = local === 'mock-when';
+        const setEventParams = new Set(['payload', 'attributes', 'mediaType', 'encoding']);
+        const mockWhenParams = new Set(['payload', 'attributes', 'mediaType', 'encoding', 'errorType', 'where', 'whereValue', 'attributeName']);
+        if (isSetEvent && !setEventParams.has(paramName))
+            return false;
+        if (isMockWhen && !mockWhenParams.has(paramName))
+            return false;
+        const escapedVal = FlowVisualizerPanel.escapeXml(String(valToWrite || ''));
+        const workspaceEdit = new vscode.WorkspaceEdit();
+        // Determine prefix used by element (e.g. "munit:" or "munit-tools:")
+        const tagMatch = nodeText.match(/^<([a-zA-Z0-9_-]+:)?([a-zA-Z0-9_-]+)/);
+        const prefix = tagMatch && tagMatch[1] ? tagMatch[1] : (isSetEvent ? 'munit:' : 'munit-tools:');
+        const tagName = tagMatch ? tagMatch[2] : (isSetEvent ? 'set-event' : 'mock-when');
+        // Check if node is self closing
+        const openTagMatch = nodeText.match(/^<[^>]*>/);
+        const isSelfClosing = openTagMatch ? openTagMatch[0].endsWith('/>') : false;
+        if (isSelfClosing) {
+            // Expand self closing to full tag with the child element
+            const openTagWithoutClose = openTagMatch[0].slice(0, -2).trimEnd();
+            let innerXml = '';
+            if (isSetEvent) {
+                if (paramName === 'payload') {
+                    innerXml = `\n\t\t<${prefix}payload value="${escapedVal}" mediaType="application/json" />\n\t`;
+                }
+                else if (paramName === 'attributes') {
+                    innerXml = `\n\t\t<${prefix}attributes value="${escapedVal}" />\n\t`;
+                }
+                else if (paramName === 'mediaType') {
+                    innerXml = `\n\t\t<${prefix}payload value="" mediaType="${escapedVal}" />\n\t`;
+                }
+                else if (paramName === 'encoding') {
+                    innerXml = `\n\t\t<${prefix}payload value="" encoding="${escapedVal}" />\n\t`;
+                }
+            }
+            else if (isMockWhen) {
+                if (paramName === 'payload') {
+                    innerXml = `\n\t\t<${prefix}then-return>\n\t\t\t<${prefix}payload value="${escapedVal}" />\n\t\t</${prefix}then-return>\n\t`;
+                }
+                else if (paramName === 'attributes') {
+                    innerXml = `\n\t\t<${prefix}then-return>\n\t\t\t<${prefix}attributes value="${escapedVal}" />\n\t\t</${prefix}then-return>\n\t`;
+                }
+                else if (paramName === 'errorType') {
+                    innerXml = `\n\t\t<${prefix}then-return>\n\t\t\t<${prefix}error typeId="${escapedVal}" />\n\t\t</${prefix}then-return>\n\t`;
+                }
+                else if (paramName === 'where' || paramName === 'whereValue') {
+                    innerXml = `\n\t\t<${prefix}with-attributes>\n\t\t\t<${prefix}with-attribute attributeName="path" whereValue="${escapedVal}" />\n\t\t</${prefix}with-attributes>\n\t`;
+                }
+                else if (paramName === 'attributeName') {
+                    innerXml = `\n\t\t<${prefix}with-attributes>\n\t\t\t<${prefix}with-attribute attributeName="${escapedVal}" whereValue="" />\n\t\t</${prefix}with-attributes>\n\t`;
+                }
+            }
+            const fullReplacement = `${openTagWithoutClose}>${innerXml}</${prefix}${tagName}>`;
+            const nodeEndPos = new vscode.Position(node.range.endLine, node.range.endCol);
+            workspaceEdit.replace(this.currentDocUri, new vscode.Range(nodeStartPos, nodeEndPos), fullReplacement);
+            const applied = await vscode.workspace.applyEdit(workspaceEdit);
+            if (applied) {
+                await curDoc.save();
+            }
+            return true;
+        }
+        // Node is open/close pair. Update existing child element or insert before </tagName>
+        if (isSetEvent) {
+            if (paramName === 'payload' || paramName === 'mediaType' || paramName === 'encoding') {
+                const payloadRegex = /<([a-zA-Z0-9_-]+:)?payload\b[^>]*(\/>|>[\s\S]*?<\/([a-zA-Z0-9_-]+:)?payload>)/;
+                const payloadMatch = nodeText.match(payloadRegex);
+                if (payloadMatch && payloadMatch.index !== undefined) {
+                    const payloadXml = payloadMatch[0];
+                    const payloadStart = curDoc.offsetAt(nodeStartPos) + payloadMatch.index;
+                    const payloadEnd = payloadStart + payloadXml.length;
+                    const payloadRange = new vscode.Range(curDoc.positionAt(payloadStart), curDoc.positionAt(payloadEnd));
+                    let updatedPayloadXml = payloadXml;
+                    if (paramName === 'payload') {
+                        if (/value="[^"]*"/.test(payloadXml)) {
+                            updatedPayloadXml = payloadXml.replace(/value="[^"]*"/, `value="${escapedVal}"`);
+                        }
+                        else if (/value='[^']*'/.test(payloadXml)) {
+                            updatedPayloadXml = payloadXml.replace(/value='[^']*'/, `value="${escapedVal}"`);
+                        }
+                        else {
+                            updatedPayloadXml = payloadXml.replace(/^<([a-zA-Z0-9_-]+:)?payload/, `$& value="${escapedVal}"`);
+                        }
+                    }
+                    else if (paramName === 'mediaType') {
+                        if (/mediaType="[^"]*"/.test(payloadXml)) {
+                            updatedPayloadXml = payloadXml.replace(/mediaType="[^"]*"/, `mediaType="${escapedVal}"`);
+                        }
+                        else {
+                            updatedPayloadXml = payloadXml.replace(/^<([a-zA-Z0-9_-]+:)?payload/, `$& mediaType="${escapedVal}"`);
+                        }
+                    }
+                    else if (paramName === 'encoding') {
+                        if (/encoding="[^"]*"/.test(payloadXml)) {
+                            updatedPayloadXml = payloadXml.replace(/encoding="[^"]*"/, `encoding="${escapedVal}"`);
+                        }
+                        else {
+                            updatedPayloadXml = payloadXml.replace(/^<([a-zA-Z0-9_-]+:)?payload/, `$& encoding="${escapedVal}"`);
+                        }
+                    }
+                    workspaceEdit.replace(this.currentDocUri, payloadRange, updatedPayloadXml);
+                }
+                else {
+                    // Insert payload element before closing tag
+                    const closeMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?set-event>/);
+                    if (closeMatch && closeMatch.index !== undefined) {
+                        const insertOffset = curDoc.offsetAt(nodeStartPos) + closeMatch.index;
+                        const insertPos = curDoc.positionAt(insertOffset);
+                        const extra = paramName === 'mediaType' ? ` mediaType="${escapedVal}"` : (paramName === 'encoding' ? ` encoding="${escapedVal}"` : ` mediaType="application/json"`);
+                        const val = paramName === 'payload' ? ` value="${escapedVal}"` : ' value=""';
+                        workspaceEdit.insert(this.currentDocUri, insertPos, `\t<${prefix}payload${val}${extra} />\n\t`);
+                    }
+                }
+            }
+            else if (paramName === 'attributes') {
+                const attrRegex = /<([a-zA-Z0-9_-]+:)?attributes\b[^>]*(\/>|>[\s\S]*?<\/([a-zA-Z0-9_-]+:)?attributes>)/;
+                const attrMatch = nodeText.match(attrRegex);
+                if (attrMatch && attrMatch.index !== undefined) {
+                    const attrXml = attrMatch[0];
+                    const attrStart = curDoc.offsetAt(nodeStartPos) + attrMatch.index;
+                    const attrEnd = attrStart + attrXml.length;
+                    const attrRange = new vscode.Range(curDoc.positionAt(attrStart), curDoc.positionAt(attrEnd));
+                    let updatedAttrXml = attrXml;
+                    if (/value="[^"]*"/.test(attrXml)) {
+                        updatedAttrXml = attrXml.replace(/value="[^"]*"/, `value="${escapedVal}"`);
+                    }
+                    else if (/value='[^']*'/.test(attrXml)) {
+                        updatedAttrXml = attrXml.replace(/value='[^']*'/, `value="${escapedVal}"`);
+                    }
+                    else {
+                        updatedAttrXml = attrXml.replace(/^<([a-zA-Z0-9_-]+:)?attributes/, `$& value="${escapedVal}"`);
+                    }
+                    workspaceEdit.replace(this.currentDocUri, attrRange, updatedAttrXml);
+                }
+                else {
+                    const closeMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?set-event>/);
+                    if (closeMatch && closeMatch.index !== undefined) {
+                        const insertOffset = curDoc.offsetAt(nodeStartPos) + closeMatch.index;
+                        const insertPos = curDoc.positionAt(insertOffset);
+                        workspaceEdit.insert(this.currentDocUri, insertPos, `\t<${prefix}attributes value="${escapedVal}" />\n\t`);
+                    }
+                }
+            }
+        }
+        else if (isMockWhen) {
+            if (paramName === 'payload' || paramName === 'attributes' || paramName === 'mediaType' || paramName === 'encoding' || paramName === 'errorType') {
+                const thenRegex = /<([a-zA-Z0-9_-]+:)?then-return\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?then-return>/;
+                const thenMatch = nodeText.match(thenRegex);
+                if (thenMatch && thenMatch.index !== undefined) {
+                    const thenInner = thenMatch[2];
+                    const thenInnerOffset = curDoc.offsetAt(nodeStartPos) + thenMatch.index + thenMatch[0].indexOf(thenInner);
+                    if (paramName === 'payload') {
+                        const plMatch = thenInner.match(/<([a-zA-Z0-9_-]+:)?payload\b[^>]*\/>/);
+                        if (plMatch && plMatch.index !== undefined) {
+                            const start = thenInnerOffset + plMatch.index;
+                            const range = new vscode.Range(curDoc.positionAt(start), curDoc.positionAt(start + plMatch[0].length));
+                            const updated = plMatch[0].replace(/value="[^"]*"/, `value="${escapedVal}"`);
+                            workspaceEdit.replace(this.currentDocUri, range, updated.includes('value=') ? updated : plMatch[0].replace(/>/, ` value="${escapedVal}" />`));
+                        }
+                        else {
+                            workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(thenInnerOffset), `\n\t\t\t<${prefix}payload value="${escapedVal}" />`);
+                        }
+                    }
+                    else if (paramName === 'attributes') {
+                        const atMatch = thenInner.match(/<([a-zA-Z0-9_-]+:)?attributes\b[^>]*\/>/);
+                        if (atMatch && atMatch.index !== undefined) {
+                            const start = thenInnerOffset + atMatch.index;
+                            const range = new vscode.Range(curDoc.positionAt(start), curDoc.positionAt(start + atMatch[0].length));
+                            const updated = atMatch[0].replace(/value="[^"]*"/, `value="${escapedVal}"`);
+                            workspaceEdit.replace(this.currentDocUri, range, updated.includes('value=') ? updated : atMatch[0].replace(/>/, ` value="${escapedVal}" />`));
+                        }
+                        else {
+                            workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(thenInnerOffset), `\n\t\t\t<${prefix}attributes value="${escapedVal}" />`);
+                        }
+                    }
+                    else if (paramName === 'errorType') {
+                        const errMatch = thenInner.match(/<([a-zA-Z0-9_-]+:)?error\b[^>]*\/>/);
+                        if (errMatch && errMatch.index !== undefined) {
+                            const start = thenInnerOffset + errMatch.index;
+                            const range = new vscode.Range(curDoc.positionAt(start), curDoc.positionAt(start + errMatch[0].length));
+                            workspaceEdit.replace(this.currentDocUri, range, `<${prefix}error typeId="${escapedVal}" />`);
+                        }
+                        else {
+                            workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(thenInnerOffset), `\n\t\t\t<${prefix}error typeId="${escapedVal}" />`);
+                        }
+                    }
+                }
+                else {
+                    // Insert <then-return> block before </mock-when>
+                    const closeMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?mock-when>/);
+                    if (closeMatch && closeMatch.index !== undefined) {
+                        const insertOffset = curDoc.offsetAt(nodeStartPos) + closeMatch.index;
+                        let child = '';
+                        if (paramName === 'payload')
+                            child = `<${prefix}payload value="${escapedVal}" />`;
+                        else if (paramName === 'attributes')
+                            child = `<${prefix}attributes value="${escapedVal}" />`;
+                        else if (paramName === 'errorType')
+                            child = `<${prefix}error typeId="${escapedVal}" />`;
+                        const block = `\t<${prefix}then-return>\n\t\t\t${child}\n\t\t</${prefix}then-return>\n\t`;
+                        workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(insertOffset), block);
+                    }
+                }
+            }
+            else if (paramName === 'where' || paramName === 'whereValue' || paramName === 'attributeName') {
+                const withRegex = /<([a-zA-Z0-9_-]+:)?with-attributes\b[^>]*>([\s\S]*?)<\/([a-zA-Z0-9_-]+:)?with-attributes>/;
+                const withMatch = nodeText.match(withRegex);
+                if (withMatch && withMatch.index !== undefined) {
+                    const withInner = withMatch[2];
+                    const withInnerOffset = curDoc.offsetAt(nodeStartPos) + withMatch.index + withMatch[0].indexOf(withInner);
+                    const attrMatch = withInner.match(/<([a-zA-Z0-9_-]+:)?with-attribute\b[^>]*\/>/);
+                    if (attrMatch && attrMatch.index !== undefined) {
+                        const start = withInnerOffset + attrMatch.index;
+                        const range = new vscode.Range(curDoc.positionAt(start), curDoc.positionAt(start + attrMatch[0].length));
+                        let updated = attrMatch[0];
+                        if (paramName === 'where' || paramName === 'whereValue') {
+                            if (/whereValue="[^"]*"/.test(updated))
+                                updated = updated.replace(/whereValue="[^"]*"/, `whereValue="${escapedVal}"`);
+                            else
+                                updated = updated.replace(/>/, ` whereValue="${escapedVal}" />`);
+                        }
+                        else if (paramName === 'attributeName') {
+                            if (/attributeName="[^"]*"/.test(updated))
+                                updated = updated.replace(/attributeName="[^"]*"/, `attributeName="${escapedVal}"`);
+                            else
+                                updated = updated.replace(/>/, ` attributeName="${escapedVal}" />`);
+                        }
+                        workspaceEdit.replace(this.currentDocUri, range, updated);
+                    }
+                    else {
+                        workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(withInnerOffset), `\n\t\t\t<${prefix}with-attribute attributeName="path" whereValue="${escapedVal}" />`);
+                    }
+                }
+                else {
+                    const closeMatch = nodeText.match(/<\/([a-zA-Z0-9_-]+:)?mock-when>/);
+                    if (closeMatch && closeMatch.index !== undefined) {
+                        const insertOffset = curDoc.offsetAt(nodeStartPos) + closeMatch.index;
+                        const attr = paramName === 'attributeName' ? `attributeName="${escapedVal}" whereValue=""` : `attributeName="path" whereValue="${escapedVal}"`;
+                        const block = `\t<${prefix}with-attributes>\n\t\t\t<${prefix}with-attribute ${attr} />\n\t\t</${prefix}with-attributes>\n\t`;
+                        workspaceEdit.insert(this.currentDocUri, curDoc.positionAt(insertOffset), block);
+                    }
+                }
+            }
+        }
+        const applied = await vscode.workspace.applyEdit(workspaceEdit);
+        if (applied) {
+            await curDoc.save();
+        }
+        return true;
+    }
     static updateExpressionInXml(xmlContent, routeRange, newExpr) {
         let strVal = String(newExpr !== null && newExpr !== undefined ? newExpr : '').trim();
         if (!strVal.startsWith('#[')) {
@@ -1642,6 +1955,18 @@ class FlowVisualizerPanel {
                 if (found)
                     return found;
             }
+            if (n.aggregator) {
+                const found = searchNode(n.aggregator, flowName);
+                if (found)
+                    return found;
+            }
+            if (n.batchZones) {
+                const found = searchNode(n.batchZones.input, flowName) ||
+                    searchNode(n.batchZones.processRecords, flowName) ||
+                    searchNode(n.batchZones.onComplete, flowName);
+                if (found)
+                    return found;
+            }
             for (const r of n.routes) {
                 if (r.id === id)
                     return routeToNode(r);
@@ -1666,6 +1991,17 @@ class FlowVisualizerPanel {
             }
             for (const c of flow.chain) {
                 const found = searchNode(c, flow.name);
+                if (found)
+                    return found;
+            }
+            if (flow.munitZones) {
+                let found = searchNode(flow.munitZones.behavior, flow.name);
+                if (found)
+                    return found;
+                found = searchNode(flow.munitZones.execution, flow.name);
+                if (found)
+                    return found;
+                found = searchNode(flow.munitZones.validation, flow.name);
                 if (found)
                     return found;
             }

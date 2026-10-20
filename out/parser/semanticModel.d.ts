@@ -1,4 +1,4 @@
-import { RawElement, SemanticModel } from './types';
+import { RawElement, SemanticModel, FlowModel, Node } from './types';
 export declare class SemanticModelBuilder {
     /**
      * Transforms a RawElement XML tree into a SemanticModel ready for layout and rendering.
@@ -11,5 +11,9 @@ export declare class SemanticModelBuilder {
     private static buildErrorRoute;
     private static buildNode;
     private static resolveSubtitle;
+    static buildBatchJobNode(el: RawElement, flowName: string, path: string, unresolvedNs: Set<string>): Node;
+    static buildBatchStepNode(el: RawElement, flowName: string, path: string, unresolvedNs: Set<string>): Node;
+    static buildBatchAggregatorNode(el: RawElement, flowName: string, path: string, unresolvedNs: Set<string>): Node;
+    static buildMunitTestFlow(flowEl: RawElement, unresolvedNs: Set<string>): FlowModel;
 }
 //# sourceMappingURL=semanticModel.d.ts.map

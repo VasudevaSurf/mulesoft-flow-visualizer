@@ -361,6 +361,169 @@ class WebviewHtmlBuilder {
       dominant-baseline: central;
     }
 
+    /* ── Batch Job Styles ───────────────────────────── */
+    .batch-job-box {
+      fill: var(--flow-bg);
+      stroke: var(--flow-border);
+      stroke-width: 1.5;
+      rx: 8;
+      filter: drop-shadow(0 4px 16px rgba(0,0,0,0.12));
+    }
+    .batch-job-header-rect {
+      fill: var(--flow-header);
+      rx: 8;
+    }
+    .batch-job-header-title {
+      font-size: 13px;
+      font-weight: 600;
+      fill: var(--fg);
+      dominant-baseline: central;
+    }
+    .batch-job-header-badge {
+      font-size: 10.5px;
+      fill: var(--text-muted);
+      dominant-baseline: central;
+    }
+
+    .batch-zone-rect {
+      fill: rgba(255, 255, 255, 0.02);
+      stroke: rgba(255, 255, 255, 0.12);
+      stroke-width: 1.2;
+    }
+    body.theme-studio .batch-zone-rect {
+      fill: #fafbfc;
+      stroke: #cfd8dc;
+    }
+
+    .batch-zone-input {
+      stroke: rgba(2, 136, 209, 0.35);
+    }
+    .batch-header-input {
+      fill: rgba(2, 136, 209, 0.12);
+    }
+    .batch-zone-process {
+      stroke: rgba(171, 71, 188, 0.35);
+    }
+    .batch-header-process {
+      fill: rgba(171, 71, 188, 0.12);
+    }
+    .batch-zone-complete {
+      stroke: rgba(76, 175, 80, 0.35);
+    }
+    .batch-header-complete {
+      fill: rgba(76, 175, 80, 0.12);
+    }
+
+    .batch-zone-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      fill: var(--fg);
+      dominant-baseline: central;
+    }
+    .batch-zone-badge {
+      font-size: 10px;
+      fill: var(--text-muted);
+      dominant-baseline: central;
+    }
+
+    .batch-step-rect {
+      fill: var(--tile-bg);
+      stroke: rgba(171, 71, 188, 0.3);
+      stroke-width: 1.2;
+    }
+    body.theme-studio .batch-step-rect {
+      fill: #ffffff;
+      stroke: #ce93d8;
+    }
+    .batch-step-header-rect {
+      fill: rgba(171, 71, 188, 0.08);
+    }
+    .batch-step-title {
+      font-size: 11.5px;
+      font-weight: 600;
+      fill: var(--fg);
+      dominant-baseline: central;
+    }
+    .batch-step-badge {
+      font-size: 9.5px;
+      fill: #ab47bc;
+      font-weight: 500;
+      dominant-baseline: central;
+    }
+
+    .batch-aggregator-rect {
+      fill: rgba(255, 152, 0, 0.04);
+      stroke: rgba(255, 152, 0, 0.35);
+      stroke-width: 1.2;
+    }
+    body.theme-studio .batch-aggregator-rect {
+      fill: #fff8e1;
+      stroke: #ffb74d;
+    }
+    .batch-aggregator-header-rect {
+      fill: rgba(255, 152, 0, 0.12);
+    }
+    .batch-aggregator-title {
+      font-size: 10.5px;
+      font-weight: 700;
+      fill: #ffa726;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      dominant-baseline: central;
+    }
+    .batch-aggregator-badge {
+      font-size: 9.5px;
+      fill: var(--text-muted);
+      dominant-baseline: central;
+    }
+
+    .batch-zone-divider {
+      stroke: var(--lane-line);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+    }
+
+    /* ── MUnit Zones ─────────────────────────────────── */
+    .munit-zone-rect {
+      fill: rgba(255, 255, 255, 0.02);
+      stroke: var(--container-border);
+      stroke-width: 1.2;
+    }
+    body.theme-studio .munit-zone-rect {
+      fill: #ffffff;
+      stroke: #cfd8dc;
+    }
+    .munit-zone-header-rect {
+      transition: fill 0.15s ease;
+    }
+    .munit-header-behavior {
+      fill: rgba(2, 136, 209, 0.08);
+    }
+    .munit-header-execution {
+      fill: rgba(171, 71, 188, 0.08);
+    }
+    .munit-header-validation {
+      fill: rgba(38, 166, 154, 0.08);
+    }
+    .munit-zone-title {
+      font-size: 11px;
+      font-weight: 700;
+      fill: var(--fg);
+      letter-spacing: 0.5px;
+      dominant-baseline: central;
+    }
+    .munit-zone-badge {
+      font-size: 10px;
+      fill: var(--text-muted);
+      dominant-baseline: central;
+    }
+    .munit-zone-divider {
+      stroke: var(--lane-line);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+    }
+
     .container-box {
       fill: var(--container-bg);
       stroke: var(--container-border);
@@ -1587,6 +1750,16 @@ class WebviewHtmlBuilder {
             if (found) return found;
           }
         }
+        if (node.aggregator) {
+          const found = searchNode(node.aggregator);
+          if (found) return found;
+        }
+        if (node.batchZones) {
+          const found = searchNode(node.batchZones.input) ||
+                        searchNode(node.batchZones.processRecords) ||
+                        searchNode(node.batchZones.onComplete);
+          if (found) return found;
+        }
         if (node.routes) {
           for (const r of node.routes) {
             if (r.id === id) return routeToNode(r);
@@ -1949,7 +2122,14 @@ class WebviewHtmlBuilder {
           <text class="flow-title" x="\${flow.x + 38}" y="\${flow.y + 16}">\${escapeHtml(flow.flowModel.name)}</text>
           \${isCollapsed 
             ? \`<text class="flow-collapsed-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${processorCount} processors (minimized - click to expand)</text>\`
-            : \`<text class="flow-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${isGlobalEH ? 'GLOBAL ERROR HANDLER' : (isSubFlow ? 'SUB-FLOW' : 'FLOW')}</text>\`
+            : \`<text class="flow-badge" x="\${flow.x + flow.width - 16}" y="\${flow.y + 16}" text-anchor="end">\${
+                flow.flowModel.type === 'munit-test' ? 'MUNIT TEST' :
+                flow.flowModel.type === 'before-test' ? 'BEFORE TEST' :
+                flow.flowModel.type === 'after-test' ? 'AFTER TEST' :
+                flow.flowModel.type === 'before-suite' ? 'BEFORE SUITE' :
+                flow.flowModel.type === 'after-suite' ? 'AFTER SUITE' :
+                isGlobalEH ? 'GLOBAL ERROR HANDLER' : (isSubFlow ? 'SUB-FLOW' : 'FLOW')
+              }</text>\`
           }
         </g>
       \`;
@@ -1966,27 +2146,86 @@ class WebviewHtmlBuilder {
         html += renderNode(flow.source);
       }
 
-      // Process Lane Line
-      if (flow.chain.length > 0) {
-        const first = flow.chain[0];
-        const last = flow.chain[flow.chain.length - 1];
-        const laneY = first.laneY;
-        const startX = (flow.sourceBox && flow.source) ? (flow.sourceBox.x + flow.sourceBox.width + 12) : flow.processBox.x;
-        const endX = last.x + last.width;
-        html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${endX}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+      // Process Lane: MUnit 3 zones or Standard Process Lane
+      if (flow.munitZones) {
+        const renderMunitZone = (zone, zoneClass, headerClass, title, dotColor) => {
+          const zoneRangeStr = escapeHtml(JSON.stringify(zone.node.range));
+          let zHtml = \`
+            <!-- \${title} Zone -->
+            <rect class="munit-zone-rect \${zoneClass}" x="\${zone.x}" y="\${zone.y}" width="\${zone.width}" height="\${zone.height}" rx="6" />
+            <g class="tile-group munit-zone-header-group" data-node-id="\${zone.nodeId}" data-range="\${zoneRangeStr}" style="cursor: pointer;" title="\${title} Zone">
+              <rect class="munit-zone-header-rect \${headerClass}" x="\${zone.x}" y="\${zone.y}" width="\${zone.width}" height="28" rx="6" />
+              <circle cx="\${zone.x + 14}" cy="\${zone.y + 14}" r="4" fill="\${dotColor}" />
+              <text class="munit-zone-title" x="\${zone.x + 24}" y="\${zone.y + 15}">\${title.toUpperCase()}</text>
+              <text class="munit-zone-badge" x="\${zone.x + zone.width - 10}" y="\${zone.y + 15}" text-anchor="end">\${zone.children.length} processor\${zone.children.length === 1 ? '' : 's'}</text>
+            </g>
+          \`;
 
-        // Inbound and inter-node connectors with arrowheads
-        html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${first.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
-        for (let i = 0; i < flow.chain.length - 1; i++) {
-          const fromNode = flow.chain[i];
-          const toNode = flow.chain[i + 1];
-          html += \`<line class="lane-line" x1="\${fromNode.x + fromNode.width}" y1="\${laneY}" x2="\${toNode.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+          if (zone.children.length > 0) {
+            const first = zone.children[0];
+            zHtml += \`<line class="lane-line" x1="\${zone.x + 8}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+            for (let i = 0; i < zone.children.length - 1; i++) {
+              const fromChild = zone.children[i];
+              const toChild = zone.children[i + 1];
+              zHtml += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+            }
+            for (const child of zone.children) {
+              zHtml += renderNode(child);
+            }
+          } else {
+            const phX = zone.x + (zone.width - 100) / 2;
+            const phY = zone.y + 36;
+            zHtml += \`
+              <g class="empty-lane-placeholder" opacity="0.6">
+                <rect x="\${phX}" y="\${phY}" width="100" height="40" rx="4" fill="none" stroke="var(--border)" stroke-dasharray="3 3" />
+                <text x="\${phX + 50}" y="\${phY + 22}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Empty \${title}</text>
+              </g>
+            \`;
+          }
+          return zHtml;
+        };
+
+        const bz = flow.munitZones.behavior;
+        const ez = flow.munitZones.execution;
+        const vz = flow.munitZones.validation;
+
+        // 1. Behavior Zone
+        html += renderMunitZone(bz, 'munit-zone-behavior', 'munit-header-behavior', 'Behavior', '#0288d1');
+
+        // Divider: Behavior -> Execution
+        html += \`<line class="munit-zone-divider" x1="\${bz.x + bz.width}" y1="\${bz.laneY}" x2="\${ez.x}" y2="\${ez.laneY}" marker-end="url(#arrow)" />\`;
+
+        // 2. Execution Zone
+        html += renderMunitZone(ez, 'munit-zone-execution', 'munit-header-execution', 'Execution', '#ab47bc');
+
+        // Divider: Execution -> Validation
+        html += \`<line class="munit-zone-divider" x1="\${ez.x + ez.width}" y1="\${ez.laneY}" x2="\${vz.x}" y2="\${vz.laneY}" marker-end="url(#arrow)" />\`;
+
+        // 3. Validation Zone
+        html += renderMunitZone(vz, 'munit-zone-validation', 'munit-header-validation', 'Validation', '#26a69a');
+      } else {
+        // Process Lane Line
+        if (flow.chain.length > 0) {
+          const first = flow.chain[0];
+          const last = flow.chain[flow.chain.length - 1];
+          const laneY = first.laneY;
+          const startX = (flow.sourceBox && flow.source) ? (flow.sourceBox.x + flow.sourceBox.width + 12) : flow.processBox.x;
+          const endX = last.x + last.width;
+          html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${endX}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+
+          // Inbound and inter-node connectors with arrowheads
+          html += \`<line class="lane-line" x1="\${startX}" y1="\${laneY}" x2="\${first.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+          for (let i = 0; i < flow.chain.length - 1; i++) {
+            const fromNode = flow.chain[i];
+            const toNode = flow.chain[i + 1];
+            html += \`<line class="lane-line" x1="\${fromNode.x + fromNode.width}" y1="\${laneY}" x2="\${toNode.x}" y2="\${laneY}" marker-end="url(#arrow)" />\`;
+          }
         }
-      }
 
-      // Process Chain Nodes
-      for (const node of flow.chain) {
-        html += renderNode(node);
+        // Process Chain Nodes
+        for (const node of flow.chain) {
+          html += renderNode(node);
+        }
       }
 
       // Error Handling Band with Dropdown Toggle
@@ -2076,6 +2315,199 @@ class WebviewHtmlBuilder {
             <text class="tile-subtitle" x="\${pNode.x + 60}" y="\${pNode.y + 82}">(minimized)</text>
           </g>
         \`;
+        return html;
+      }
+
+      // 1b. Batch Job Container with three zones (Input, Process Records, On Complete)
+      if (pNode.batchZones) {
+        const rangeStr = escapeHtml(JSON.stringify(pNode.node.range));
+        const searchData = escapeHtml(\`\${pNode.node.label} \${pNode.node.subtitle || ''} \${pNode.node.descriptor.displayName}\`);
+        const blockSize = pNode.node.attributes['blockSize'] || '100';
+        const maxFailed = pNode.node.attributes['maxFailedRecords'] || '0';
+        const jobInstanceId = pNode.node.attributes['jobInstanceId'] || '';
+        const badgeStr = \`blockSize: \${escapeHtml(blockSize)} | maxFailed: \${escapeHtml(maxFailed)}\${jobInstanceId ? ' | ' + escapeHtml(truncate(jobInstanceId, 16)) : ''}\`;
+
+        html += \`
+          <!-- Batch Job Container Box -->
+          <rect class="batch-job-box" x="\${pNode.x}" y="\${pNode.y}" width="\${pNode.width}" height="\${pNode.height}" rx="8" />
+
+          <!-- Batch Job Header Strip -->
+          <g class="tile-group batch-job-header" data-node-id="\${pNode.nodeId}" data-range="\${rangeStr}" data-search="\${searchData}" style="cursor: pointer;" title="Batch Job: \${escapeHtml(pNode.node.label)}">
+            <rect class="batch-job-header-rect" x="\${pNode.x}" y="\${pNode.y}" width="\${pNode.width}" height="32" rx="8" />
+            <use xlink:href="#\${pNode.node.descriptor.iconId || 'core:batch-job'}" x="\${pNode.x + 10}" y="\${pNode.y + 7}" width="18" height="18" />
+            <text class="batch-job-header-title" x="\${pNode.x + 34}" y="\${pNode.y + 17}">Batch Job: \${escapeHtml(pNode.node.label)}</text>
+            <text class="batch-job-header-badge" x="\${pNode.x + pNode.width - 14}" y="\${pNode.y + 17}" text-anchor="end">\${badgeStr}</text>
+          </g>
+        \`;
+
+        // 1. Zone: Input
+        const inputZone = pNode.batchZones.input;
+        const inputRangeStr = escapeHtml(JSON.stringify(inputZone.node.range));
+        html += \`
+          <!-- Zone 1: Input -->
+          <rect class="batch-zone-rect batch-zone-input" x="\${inputZone.x}" y="\${inputZone.y}" width="\${inputZone.width}" height="\${inputZone.height}" rx="6" />
+          <g class="tile-group batch-zone-header-group" data-node-id="\${inputZone.nodeId}" data-range="\${inputRangeStr}" style="cursor: pointer;" title="Input Zone">
+            <rect class="batch-zone-header-rect batch-header-input" x="\${inputZone.x}" y="\${inputZone.y}" width="\${inputZone.width}" height="28" rx="6" />
+            <circle cx="\${inputZone.x + 14}" cy="\${inputZone.y + 14}" r="4" fill="#0288d1" />
+            <text class="batch-zone-title" x="\${inputZone.x + 24}" y="\${inputZone.y + 15}">INPUT</text>
+            <text class="batch-zone-badge" x="\${inputZone.x + inputZone.width - 10}" y="\${inputZone.y + 15}" text-anchor="end">\${inputZone.children.length} processor\${inputZone.children.length === 1 ? '' : 's'}</text>
+          </g>
+        \`;
+        if (inputZone.children.length > 0) {
+          const first = inputZone.children[0];
+          html += \`<line class="lane-line" x1="\${inputZone.x + 8}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          for (let i = 0; i < inputZone.children.length - 1; i++) {
+            const fromChild = inputZone.children[i];
+            const toChild = inputZone.children[i + 1];
+            html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          }
+          for (const child of inputZone.children) {
+            html += renderNode(child);
+          }
+        } else {
+          // Empty placeholder for input
+          const phX = inputZone.x + (inputZone.width - 100) / 2;
+          const phY = inputZone.y + 36;
+          html += \`
+            <g class="empty-lane-placeholder" opacity="0.6">
+              <rect x="\${phX}" y="\${phY}" width="100" height="40" rx="4" fill="none" stroke="var(--border)" stroke-dasharray="3 3" />
+              <text x="\${phX + 50}" y="\${phY + 22}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Empty Input</text>
+            </g>
+          \`;
+        }
+
+        // Zone Divider 1 (Input -> Process Records)
+        const procZone = pNode.batchZones.processRecords;
+        html += \`<line class="batch-zone-divider" x1="\${inputZone.x + inputZone.width}" y1="\${inputZone.laneY}" x2="\${procZone.x}" y2="\${procZone.laneY}" marker-end="url(#arrow)" />\`;
+
+        // 2. Zone: Process Records
+        const procRangeStr = escapeHtml(JSON.stringify(procZone.node.range));
+        html += \`
+          <!-- Zone 2: Process Records -->
+          <rect class="batch-zone-rect batch-zone-process" x="\${procZone.x}" y="\${procZone.y}" width="\${procZone.width}" height="\${procZone.height}" rx="6" />
+          <g class="tile-group batch-zone-header-group" data-node-id="\${procZone.nodeId}" data-range="\${procRangeStr}" style="cursor: pointer;" title="Process Records Zone">
+            <rect class="batch-zone-header-rect batch-header-process" x="\${procZone.x}" y="\${procZone.y}" width="\${procZone.width}" height="28" rx="6" />
+            <circle cx="\${procZone.x + 14}" cy="\${procZone.y + 14}" r="4" fill="#ab47bc" />
+            <text class="batch-zone-title" x="\${procZone.x + 24}" y="\${procZone.y + 15}">PROCESS RECORDS</text>
+            <text class="batch-zone-badge" x="\${procZone.x + procZone.width - 10}" y="\${procZone.y + 15}" text-anchor="end">\${procZone.children.length} step\${procZone.children.length === 1 ? '' : 's'}</text>
+          </g>
+        \`;
+
+        // Process Steps inside Process Records
+        for (let sIdx = 0; sIdx < procZone.children.length; sIdx++) {
+          const step = procZone.children[sIdx];
+          const stepRangeStr = escapeHtml(JSON.stringify(step.node.range));
+          const stepSearchData = escapeHtml(\`\${step.node.label} \${step.node.subtitle || ''}\`);
+          const acceptPolicy = step.node.attributes['acceptPolicy'] || 'NO_FAILURES';
+          const acceptExpr = step.node.attributes['acceptExpression'] || '';
+          const stepBadgeText = acceptExpr ? truncate(acceptExpr, 16) : acceptPolicy;
+
+          html += \`
+            <!-- Batch Step Card -->
+            <rect class="batch-step-rect" x="\${step.x}" y="\${step.y}" width="\${step.width}" height="\${step.height}" rx="6" />
+            <g class="tile-group batch-step-header" data-node-id="\${step.nodeId}" data-range="\${stepRangeStr}" data-search="\${stepSearchData}" style="cursor: pointer;" title="Batch Step: \${escapeHtml(step.node.label)} (\${acceptPolicy})">
+              <rect class="batch-step-header-rect" x="\${step.x}" y="\${step.y}" width="\${step.width}" height="28" rx="6" />
+              <use xlink:href="#core:batch-step" x="\${step.x + 8}" y="\${step.y + 6}" width="16" height="16" />
+              <text class="batch-step-title" x="\${step.x + 28}" y="\${step.y + 15}">\${escapeHtml(step.node.label)}</text>
+              <text class="batch-step-badge" x="\${step.x + step.width - 10}" y="\${step.y + 15}" text-anchor="end">\${escapeHtml(stepBadgeText)}</text>
+            </g>
+          \`;
+
+          // Step Processors
+          if (step.children.length > 0) {
+            const first = step.children[0];
+            html += \`<line class="lane-line" x1="\${step.x + 8}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+            for (let i = 0; i < step.children.length - 1; i++) {
+              const fromChild = step.children[i];
+              const toChild = step.children[i + 1];
+              html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+            }
+            for (const child of step.children) {
+              html += renderNode(child);
+            }
+          }
+
+          // Step Aggregator
+          if (step.aggregator) {
+            const agg = step.aggregator;
+            const aggRangeStr = escapeHtml(JSON.stringify(agg.node.range));
+            const aggSize = agg.node.attributes['size'] || 'all';
+            const aggStreaming = agg.node.attributes['streaming'] === 'true';
+            const aggBadge = \`size: \${aggSize}\${aggStreaming ? ' | streaming' : ''}\`;
+
+            const aggStartX = step.children.length > 0 ? (step.children[step.children.length - 1].x + step.children[step.children.length - 1].width) : (step.x + 20);
+            html += \`<line class="lane-line" x1="\${aggStartX}" y1="\${agg.laneY}" x2="\${agg.x}" y2="\${agg.laneY}" marker-end="url(#arrow)" />\`;
+
+            html += \`
+              <!-- Batch Aggregator Card -->
+              <rect class="batch-aggregator-rect" x="\${agg.x}" y="\${agg.y}" width="\${agg.width}" height="\${agg.height}" rx="5" />
+              <g class="tile-group batch-aggregator-header" data-node-id="\${agg.nodeId}" data-range="\${aggRangeStr}" style="cursor: pointer;" title="Aggregator (\${aggBadge})">
+                <rect class="batch-aggregator-header-rect" x="\${agg.x}" y="\${agg.y}" width="\${agg.width}" height="24" rx="5" />
+                <text class="batch-aggregator-title" x="\${agg.x + 8}" y="\${agg.y + 13}">Aggregator</text>
+                <text class="batch-aggregator-badge" x="\${agg.x + agg.width - 8}" y="\${agg.y + 13}" text-anchor="end">\${escapeHtml(aggBadge)}</text>
+              </g>
+            \`;
+
+            if (agg.children.length > 0) {
+              const first = agg.children[0];
+              html += \`<line class="lane-line" x1="\${agg.x + 6}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+              for (let i = 0; i < agg.children.length - 1; i++) {
+                const fromChild = agg.children[i];
+                const toChild = agg.children[i + 1];
+                html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+              }
+              for (const child of agg.children) {
+                html += renderNode(child);
+              }
+            }
+          }
+
+          // Connector arrow between Step i and Step i+1
+          if (sIdx < procZone.children.length - 1) {
+            const nextStep = procZone.children[sIdx + 1];
+            html += \`<line class="lane-line" x1="\${step.x + step.width}" y1="\${step.laneY}" x2="\${nextStep.x}" y2="\${nextStep.laneY}" marker-end="url(#arrow)" />\`;
+          }
+        }
+
+        // Zone Divider 2 (Process Records -> On Complete)
+        const onCompZone = pNode.batchZones.onComplete;
+        html += \`<line class="batch-zone-divider" x1="\${procZone.x + procZone.width}" y1="\${procZone.laneY}" x2="\${onCompZone.x}" y2="\${onCompZone.laneY}" marker-end="url(#arrow)" />\`;
+
+        // 3. Zone: On Complete
+        const onCompRangeStr = escapeHtml(JSON.stringify(onCompZone.node.range));
+        html += \`
+          <!-- Zone 3: On Complete -->
+          <rect class="batch-zone-rect batch-zone-complete" x="\${onCompZone.x}" y="\${onCompZone.y}" width="\${onCompZone.width}" height="\${onCompZone.height}" rx="6" />
+          <g class="tile-group batch-zone-header-group" data-node-id="\${onCompZone.nodeId}" data-range="\${onCompRangeStr}" style="cursor: pointer;" title="On Complete Zone">
+            <rect class="batch-zone-header-rect batch-header-complete" x="\${onCompZone.x}" y="\${onCompZone.y}" width="\${onCompZone.width}" height="28" rx="6" />
+            <circle cx="\${onCompZone.x + 14}" cy="\${onCompZone.y + 14}" r="4" fill="#4caf50" />
+            <text class="batch-zone-title" x="\${onCompZone.x + 24}" y="\${onCompZone.y + 15}">ON COMPLETE</text>
+            <text class="batch-zone-badge" x="\${onCompZone.x + onCompZone.width - 10}" y="\${onCompZone.y + 15}" text-anchor="end">\${onCompZone.children.length} processor\${onCompZone.children.length === 1 ? '' : 's'}</text>
+          </g>
+        \`;
+        if (onCompZone.children.length > 0) {
+          const first = onCompZone.children[0];
+          html += \`<line class="lane-line" x1="\${onCompZone.x + 8}" y1="\${first.laneY}" x2="\${first.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          for (let i = 0; i < onCompZone.children.length - 1; i++) {
+            const fromChild = onCompZone.children[i];
+            const toChild = onCompZone.children[i + 1];
+            html += \`<line class="lane-line" x1="\${fromChild.x + fromChild.width}" y1="\${first.laneY}" x2="\${toChild.x}" y2="\${first.laneY}" marker-end="url(#arrow)" />\`;
+          }
+          for (const child of onCompZone.children) {
+            html += renderNode(child);
+          }
+        } else {
+          // Empty placeholder for on-complete
+          const phX = onCompZone.x + (onCompZone.width - 100) / 2;
+          const phY = onCompZone.y + 36;
+          html += \`
+            <g class="empty-lane-placeholder" opacity="0.6">
+              <rect x="\${phX}" y="\${phY}" width="100" height="40" rx="4" fill="none" stroke="var(--border)" stroke-dasharray="3 3" />
+              <text x="\${phX + 50}" y="\${phY + 22}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Empty On-Complete</text>
+            </g>
+          \`;
+        }
+
         return html;
       }
 
@@ -3408,7 +3840,7 @@ class WebviewHtmlBuilder {
       } else if (typeof val === 'string' && val.trim().startsWith('#[')) {
         isFx = true;
         fieldExpressionModes[nodeKey] = true;
-      } else if (param.defaultExpressionMode || param.name === 'when') {
+      } else if (param.defaultExpressionMode || param.name === 'when' || param.name === 'payload' || param.name === 'attributes' || param.expressionSupport === 'REQUIRED') {
         isFx = true;
         fieldExpressionModes[nodeKey] = true;
       } else {
@@ -3988,12 +4420,14 @@ class WebviewHtmlBuilder {
         sendParamUpdate(selectedNodeId, param.name, curVal, param.dataType);
       };
 
+      const isParamMultiLine = param.name === 'payload' || param.name === 'attributes' || param.name === 'expression' || param.name === 'actual' || param.name === 'expected' || param.name === 'is' || param.name === 'where' || param.name === 'whereValue' || param.name === 'value';
+
       attachExpressionToggle({
         formGroup: div,
         param: param,
         val: val,
         normalWidget: normalWidget,
-        isMultiLine: false,
+        isMultiLine: isParamMultiLine,
         getNormalVal: function() { return normalWidget.value; },
         setNormalVal: function(v) { normalWidget.value = (v !== undefined && v !== null) ? String(v) : ''; }
       });

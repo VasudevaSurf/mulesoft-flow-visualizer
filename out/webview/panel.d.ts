@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { WebviewToHostMessage } from './messages';
 import { SourceRange, SemanticModel, Node } from '../parser/types';
 export declare class FlowVisualizerPanel {
     static currentPanel: FlowVisualizerPanel | undefined;
@@ -6,10 +7,10 @@ export declare class FlowVisualizerPanel {
     private readonly panel;
     private readonly extensionUri;
     private disposables;
-    private currentDocUri;
+    currentDocUri: vscode.Uri | null;
     private debounceTimer;
     private isSyncingFromWebview;
-    private lastModel;
+    lastModel: SemanticModel | null;
     private lastScene;
     private collapsedNodeIds;
     static createOrShow(extensionUri: vscode.Uri, xmlUri?: vscode.Uri): FlowVisualizerPanel;
@@ -17,7 +18,7 @@ export declare class FlowVisualizerPanel {
     loadDocument(uri: vscode.Uri): Promise<void>;
     private triggerUpdateDebounced;
     updateView(): Promise<void>;
-    private handleWebviewMessage;
+    handleWebviewMessage(msg: WebviewToHostMessage): Promise<void>;
     private static outputChannel;
     static getOutputChannel(): vscode.OutputChannel;
     private handleShowProperties;
@@ -45,12 +46,18 @@ export declare class FlowVisualizerPanel {
         childValues: Record<string, string>;
     };
     static escapeXml(unsafe: string): string;
-    private handleUpdateParameterValue;
+    handleUpdateParameterValue(msg: {
+        nodeId: string;
+        paramName: string;
+        value: any;
+        dataType?: string;
+    }): Promise<void>;
     private handleTransformScriptUpdate;
     private handleTestConnection;
     private handleAddChoiceRoute;
     handleDeleteRoute(routeId: string): Promise<void>;
     handleReorderChoiceRoutes(nodeId: string, fromIndex: number, toIndex: number): Promise<void>;
+    private handleMunitChildElementUpdate;
     static updateExpressionInXml(xmlContent: string, routeRange: SourceRange, newExpr: string): string;
     static deleteRouteInXml(xmlContent: string, routeRange: SourceRange): string;
     static reorderChoiceRoutesInXml(xmlContent: string, routeRangeA: SourceRange, routeRangeB: SourceRange): string;

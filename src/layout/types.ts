@@ -13,6 +13,18 @@ export interface Box {
   height: number;
 }
 
+export interface PositionedBatchZones {
+  input: PositionedNode;
+  processRecords: PositionedNode;
+  onComplete: PositionedNode;
+}
+
+export interface PositionedMunitZones {
+  behavior: PositionedNode;
+  execution: PositionedNode;
+  validation: PositionedNode;
+}
+
 export interface PositionedNode extends Box {
   nodeId: string;
   node: Node;
@@ -24,6 +36,8 @@ export interface PositionedNode extends Box {
   errorBandBox?: Box | null;
   errorHandlers?: PositionedRoute[];
   errorCollapsed?: boolean;
+  batchZones?: PositionedBatchZones;
+  aggregator?: PositionedNode | null;
 }
 
 export interface PositionedRoute extends Box {
@@ -44,6 +58,7 @@ export interface PositionedFlow extends Box {
   chain: PositionedNode[];
   errorHandlers: PositionedRoute[];
   errorCollapsed?: boolean;
+  munitZones?: PositionedMunitZones;
 }
 
 export interface PositionedScene {

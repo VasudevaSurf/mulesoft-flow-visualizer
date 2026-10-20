@@ -4,12 +4,19 @@ export interface MeasuredBox {
     h: number;
     laneY: number;
 }
+export interface MeasuredBatchZones {
+    input: MeasuredNode;
+    processRecords: MeasuredNode;
+    onComplete: MeasuredNode;
+}
 export interface MeasuredNode extends MeasuredBox {
     node: Node;
     innerChain?: MeasuredChain;
     innerRoutes?: MeasuredRoute[];
     collapsedBadgeCount?: number;
     errorCollapsed?: boolean;
+    batchZones?: MeasuredBatchZones;
+    aggregator?: MeasuredNode | null;
 }
 export interface MeasuredRoute extends MeasuredBox {
     route: Route;
@@ -18,12 +25,18 @@ export interface MeasuredRoute extends MeasuredBox {
 export interface MeasuredChain extends MeasuredBox {
     items: MeasuredNode[];
 }
+export interface MeasuredMunitZones {
+    behavior: MeasuredNode;
+    execution: MeasuredNode;
+    validation: MeasuredNode;
+}
 export interface MeasuredFlow extends MeasuredBox {
     flow: FlowModel;
     sourceMeasured: MeasuredNode | null;
     processChain: MeasuredChain;
     errorLanes: MeasuredRoute[];
     errorCollapsed: boolean;
+    munitZones?: MeasuredMunitZones;
 }
 export declare class MeasureEngine {
     /**

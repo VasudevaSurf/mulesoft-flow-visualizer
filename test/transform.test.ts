@@ -1,4 +1,4 @@
-import * as assert from 'assert';
+import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -59,7 +59,13 @@ describe('Transform Message & DWL Resource Tests', () => {
     }
   });
 
-  it('1. Inline script: extracts full multi-line DataWeave script without truncation', () => {
+  function parseAndBuild(xml: string) {
+    const parseResult = MuleXmlParser.parse(xml);
+    assert(parseResult.root, 'XML root should be parsed');
+    return SemanticModelBuilder.build(parseResult.root!, xmlFilePath);
+  }
+
+  it('1. Inline script: extracts inline payload script correctly', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core">
@@ -69,16 +75,12 @@ describe('Transform Message & DWL Resource Tests', () => {
                 <ee:set-payload>%dw 2.0
 output application/json
 ---
-{ "type": "inline", "value": 100 }</ee:set-payload>
+{ "type": "inline", "name": "MuleSoft" }</ee:set-payload>
             </ee:message>
         </ee:transform>
     </flow>
 </mule>`;
-    const parseResult = MuleXmlParser.parse(xml);
-    assert(parseResult.root, 'XML root should be parsed');
-    const model = SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    const model = parseAndBuild(xml);
     const flow = model.flows[0];
     const node = flow.chain[0];
     const body = FlowVisualizerPanel.extractComponentBody(node, currentDocUri);
@@ -101,19 +103,15 @@ output application/json
         </ee:transform>
     </flow>
 </mule>`;
-    const parseResult = MuleXmlParser.parse(xml);
-    assert(parseResult.root, 'XML root should be parsed');
-    const model = SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    const model = parseAndBuild(xml);
     const flow = model.flows[0];
     const node = flow.chain[0];
     const body = FlowVisualizerPanel.extractComponentBody(node, currentDocUri);
     assert.strictEqual(body.hasPayload, true);
-    assert(body.primaryScript && body.primaryScript.includes('"type": "cdata"'));
+    assert.strictEqual(body.primaryScript, '%dw 2.0\noutput application/json\n---\n{ "type": "cdata", "name": "MuleSoft" }');
   });
 
-  it('3. resource="x.dwl": resolves relative to XML and in src/main/resources/', () => {
+  it('3. resource="relative.dwl": loads script relative to current XML file', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core">
@@ -125,11 +123,7 @@ output application/json
         </ee:transform>
     </flow>
 </mule>`;
-    const parseResult = MuleXmlParser.parse(xml);
-    assert(parseResult.root, 'XML root should be parsed');
-    const model = SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    const model = parseAndBuild(xml);
     const flow = model.flows[0];
     const node = flow.chain[0];
     const body = FlowVisualizerPanel.extractComponentBody(node, currentDocUri);
@@ -149,11 +143,7 @@ output application/json
         </ee:transform>
     </flow>
 </mule>`;
-    const parseResult = MuleXmlParser.parse(xml);
-    assert(parseResult.root, 'XML root should be parsed');
-    const model = SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    const model = parseAndBuild(xml);
     const flow = model.flows[0];
     const node = flow.chain[0];
     const body = FlowVisualizerPanel.extractComponentBody(node, currentDocUri);
@@ -197,11 +187,7 @@ output application/json
         </ee:transform>
     </flow>
 </mule>`;
-    const parseResult = MuleXmlParser.parse(xml);
-    assert(parseResult.root, 'XML root should be parsed');
-    const model = SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    const model = parseAndBuild(xml);
     const flow = model.flows[0];
     const node = flow.chain[0];
     const body = FlowVisualizerPanel.extractComponentBody(node, currentDocUri);

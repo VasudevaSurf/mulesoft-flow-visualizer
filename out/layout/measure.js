@@ -26,6 +26,112 @@ class MeasureEngine {
                 collapsedBadgeCount: count,
             };
         }
+        if (node.batchZones) {
+            // 1. Measure Input Zone
+            const inputChain = this.measureChain(node.batchZones.input.chain, depth + 1);
+            const inputHeaderW = Math.ceil((node.batchZones.input.label.length * 7.5) + 60);
+            const inputW = Math.max(inputChain.w + 32, inputHeaderW, 140);
+            const inputH = inputChain.h + 30 + 16;
+            const measuredInput = {
+                node: node.batchZones.input,
+                w: inputW,
+                h: inputH,
+                laneY: 30 + inputChain.laneY,
+                innerChain: inputChain,
+            };
+            // 2. Measure Steps in Process Records Zone
+            const stepNodes = node.batchZones.processRecords.chain;
+            const measuredSteps = [];
+            let totalStepsW = 0;
+            let maxStepH = 0;
+            for (let sIdx = 0; sIdx < stepNodes.length; sIdx++) {
+                const step = stepNodes[sIdx];
+                const stepChain = this.measureChain(step.chain, depth + 1);
+                let aggMeasured = null;
+                if (step.aggregator) {
+                    const aggChain = this.measureChain(step.aggregator.chain, depth + 1);
+                    const aggHeaderW = Math.ceil((step.aggregator.label.length * 7.5) + 60);
+                    const aggW = Math.max(aggChain.w + 24, aggHeaderW, 140);
+                    const aggH = aggChain.h + 28 + 14;
+                    aggMeasured = {
+                        node: step.aggregator,
+                        w: aggW,
+                        h: aggH,
+                        laneY: 28 + aggChain.laneY,
+                        innerChain: aggChain,
+                    };
+                }
+                const stepHeaderW = Math.ceil((step.label.length * 7.5) + (step.subtitle ? step.subtitle.length * 6.5 : 0) + 70);
+                const stepInnerContentW = stepChain.w + (aggMeasured ? (aggMeasured.w + 20) : 0);
+                const stepW = Math.max(stepInnerContentW + 32, stepHeaderW, 160);
+                const stepInnerContentH = Math.max(stepChain.h, aggMeasured ? aggMeasured.h : 0);
+                const stepH = stepInnerContentH + 32 + 16;
+                if (stepH > maxStepH)
+                    maxStepH = stepH;
+                measuredSteps.push({
+                    node: step,
+                    w: stepW,
+                    h: stepH,
+                    laneY: 32 + stepChain.laneY,
+                    innerChain: stepChain,
+                    aggregator: aggMeasured,
+                });
+                totalStepsW += stepW;
+                if (sIdx < stepNodes.length - 1)
+                    totalStepsW += 24;
+            }
+            const procRecsHeaderW = Math.ceil((node.batchZones.processRecords.label.length * 7.5) + 60);
+            const procRecsW = Math.max(totalStepsW + 36, procRecsHeaderW, 220);
+            const procRecsH = maxStepH + 30 + 20;
+            const measuredProcRecords = {
+                node: node.batchZones.processRecords,
+                w: procRecsW,
+                h: procRecsH,
+                laneY: 30 + (maxStepH > 0 ? (32 + constants_1.L.tile.h / 2) : constants_1.L.laneMinH / 2),
+                innerChain: {
+                    w: totalStepsW,
+                    h: maxStepH,
+                    laneY: 32 + constants_1.L.tile.h / 2,
+                    items: measuredSteps,
+                },
+            };
+            // 3. Measure On-Complete Zone
+            const onCompChain = this.measureChain(node.batchZones.onComplete.chain, depth + 1);
+            const onCompHeaderW = Math.ceil((node.batchZones.onComplete.label.length * 7.5) + 60);
+            const onCompW = Math.max(onCompChain.w + 32, onCompHeaderW, 140);
+            const onCompH = onCompChain.h + 30 + 16;
+            const measuredOnComplete = {
+                node: node.batchZones.onComplete,
+                w: onCompW,
+                h: onCompH,
+                laneY: 30 + onCompChain.laneY,
+                innerChain: onCompChain,
+            };
+            // Harmonize height across the 3 zones
+            const commonZonesH = Math.max(measuredInput.h, measuredProcRecords.h, measuredOnComplete.h, constants_1.L.laneMinH + 46);
+            measuredInput.h = commonZonesH;
+            measuredProcRecords.h = commonZonesH;
+            measuredOnComplete.h = commonZonesH;
+            for (const mStep of measuredSteps) {
+                mStep.h = Math.max(mStep.h, commonZonesH - 30 - 20);
+            }
+            const jobHeaderW = Math.ceil((node.label.length * 7.5) + 120);
+            const interZoneGap = 28;
+            const totalZonesW = measuredInput.w + interZoneGap + measuredProcRecords.w + interZoneGap + measuredOnComplete.w;
+            const jobW = Math.max(totalZonesW + constants_1.L.scopePad.left + constants_1.L.scopePad.right, jobHeaderW + 40);
+            const jobH = commonZonesH + constants_1.L.scopePad.top + constants_1.L.scopePad.bottom;
+            return {
+                node,
+                w: jobW,
+                h: jobH,
+                laneY: constants_1.L.scopePad.top + commonZonesH / 2,
+                batchZones: {
+                    input: measuredInput,
+                    processRecords: measuredProcRecords,
+                    onComplete: measuredOnComplete,
+                },
+            };
+        }
         const kind = node.descriptor.kind;
         const isScope = kind === 'scope' || node.descriptor.localName === 'try';
         // Scope: nested chain with optional error-handler
@@ -224,7 +330,51 @@ class MeasureEngine {
                 errorCollapsed: true,
             };
         }
-        const processInner = this.measureChain(flow.chain, 0);
+        let munitZonesMeasured;
+        let processInner;
+        if (flow.munitZones) {
+            const measureZone = (zoneNode) => {
+                const innerChain = this.measureChain(zoneNode.chain, 0);
+                const headerW = Math.ceil((zoneNode.label.length * 8) + 60);
+                const w = Math.max(innerChain.w + 32, headerW, 160);
+                const h = innerChain.h + 30 + 16;
+                return {
+                    node: zoneNode,
+                    w,
+                    h,
+                    laneY: 30 + innerChain.laneY,
+                    innerChain,
+                };
+            };
+            const mBehavior = measureZone(flow.munitZones.behavior);
+            const mExecution = measureZone(flow.munitZones.execution);
+            const mValidation = measureZone(flow.munitZones.validation);
+            // Harmonize heights & lane lines
+            const maxZoneH = Math.max(mBehavior.h, mExecution.h, mValidation.h, constants_1.L.laneMinH);
+            const maxZoneLaneY = Math.max(mBehavior.laneY, mExecution.laneY, mValidation.laneY);
+            mBehavior.h = maxZoneH;
+            mExecution.h = maxZoneH;
+            mValidation.h = maxZoneH;
+            mBehavior.laneY = maxZoneLaneY;
+            mExecution.laneY = maxZoneLaneY;
+            mValidation.laneY = maxZoneLaneY;
+            munitZonesMeasured = {
+                behavior: mBehavior,
+                execution: mExecution,
+                validation: mValidation,
+            };
+            const zonesGap = 28;
+            const totalZonesW = mBehavior.w + zonesGap + mExecution.w + zonesGap + mValidation.w;
+            processInner = {
+                w: totalZonesW,
+                h: maxZoneH,
+                laneY: maxZoneLaneY,
+                items: [mBehavior, mExecution, mValidation],
+            };
+        }
+        else {
+            processInner = this.measureChain(flow.chain, 0);
+        }
         let sourceMeasured = null;
         let sourceW = 0;
         if (flow.type === 'flow' && flow.source) {
@@ -300,6 +450,7 @@ class MeasureEngine {
             processChain: processInner,
             errorLanes,
             errorCollapsed,
+            munitZones: munitZonesMeasured,
         };
     }
     static countDescendantProcessors(node) {

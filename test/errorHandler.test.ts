@@ -1,4 +1,4 @@
-import * as assert from 'assert';
+import assert from 'assert';
 import { MuleXmlParser } from '../src/parser/xmlParser';
 import { SemanticModelBuilder } from '../src/parser/semanticModel';
 import { layout } from '../src/layout';

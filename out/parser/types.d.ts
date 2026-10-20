@@ -42,6 +42,16 @@ export interface ModelDiagnostic {
     range?: SourceRange;
     elementName?: string;
 }
+export interface BatchJobZones {
+    input: Node;
+    processRecords: Node;
+    onComplete: Node;
+}
+export interface MunitTestZones {
+    behavior: Node;
+    execution: Node;
+    validation: Node;
+}
 export interface Node {
     id: string;
     descriptor: ComponentDescriptor;
@@ -61,6 +71,10 @@ export interface Node {
     text?: string | null;
     collapsed: boolean;
     errorBandCollapsed?: boolean;
+    /** Batch job three zones if this node is a batch:job. */
+    batchZones?: BatchJobZones;
+    /** Aggregator component if this node is a batch:step. */
+    aggregator?: Node | null;
     diagnostics: ModelDiagnostic[];
 }
 export interface Route {
@@ -76,10 +90,11 @@ export interface Route {
     body?: RawElement[];
     range: SourceRange;
 }
+export type FlowType = 'flow' | 'sub-flow' | 'global-error-handler' | 'munit-test' | 'before-test' | 'after-test' | 'before-suite' | 'after-suite';
 export interface FlowModel {
     id: string;
     name: string;
-    type: 'flow' | 'sub-flow' | 'global-error-handler';
+    type: FlowType;
     source: Node | null;
     chain: Node[];
     errorHandler: Route[];
@@ -87,6 +102,7 @@ export interface FlowModel {
     range: SourceRange;
     collapsed: boolean;
     errorBandCollapsed?: boolean;
+    munitZones?: MunitTestZones;
 }
 export interface SemanticModel {
     filePath: string;

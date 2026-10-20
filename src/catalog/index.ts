@@ -59,6 +59,7 @@ export class ExtensionCatalog {
     const coreMatch =
       CORE_CATALOG[key] ||
       (prefix ? CORE_CATALOG[`${prefix}:${localName}`] : undefined) ||
+      (ns.includes('batch') ? CORE_CATALOG[`batch:${localName}`] : undefined) ||
       CORE_CATALOG[localName];
     if (coreMatch) {
       return coreMatch;
@@ -142,6 +143,7 @@ export class ExtensionCatalog {
     const coreMatch =
       CORE_CATALOG[key] ||
       (prefix ? CORE_CATALOG[`${prefix}:${localName}`] : null) ||
+      (ns.includes('batch') ? CORE_CATALOG[`batch:${localName}`] : null) ||
       CORE_CATALOG[localName];
     if (coreMatch && coreMatch.groups && coreMatch.groups.length > 0) {
       return {

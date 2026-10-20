@@ -783,15 +783,38 @@ exports.CORE_CATALOG = {
                 name: "General",
                 parameters: [
                     {
-                        name: "jobName",
+                        name: "name",
                         label: "Job Name",
                         description: "The unique name of the batch job.",
                         dataType: "string",
-                        required: true,
+                        required: false,
                         group: "General",
                         supportsExpression: false,
                         isReference: false,
                         expressionSupport: "NOT_SUPPORTED"
+                    },
+                    {
+                        name: "jobName",
+                        label: "Job Name",
+                        description: "The unique name of the batch job.",
+                        dataType: "string",
+                        required: false,
+                        group: "General",
+                        supportsExpression: false,
+                        isReference: false,
+                        expressionSupport: "NOT_SUPPORTED"
+                    },
+                    {
+                        name: "jobInstanceId",
+                        label: "Job Instance ID",
+                        description: "Expression to identify this job instance.",
+                        dataType: "string",
+                        required: false,
+                        group: "General",
+                        supportsExpression: true,
+                        isReference: false,
+                        expressionSupport: "SUPPORTED",
+                        defaultExpressionMode: true
                     },
                     {
                         name: "maxFailedRecords",
@@ -2019,7 +2042,19 @@ exports.CORE_CATALOG = {
         kind: "operation",
         displayName: "Set Event",
         iconId: "core:munit-test",
-        groups: [{ name: "General", parameters: [{ name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }] }]
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "payload", label: "Payload", description: "The payload expression or value to set on the Mule event.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "mediaType", label: "MIME Type", description: "The MIME type of the payload (e.g. application/json, text/plain).", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "encoding", label: "Encoding", description: "Character encoding of the payload (e.g. UTF-8).", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "attributes", label: "Attributes", description: "The attributes expression or value to set on the Mule event.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "cloneOriginalEvent", label: "Clone Original Event", description: "Whether to clone the original event or create a new one.", dataType: "boolean", required: false, defaultValue: "false", group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name for this component.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
     },
     "munit:before-test": {
         namespaceUri: exports.MULE_MUNIT_NAMESPACE,
@@ -2065,8 +2100,26 @@ exports.CORE_CATALOG = {
             {
                 name: "General",
                 parameters: [
-                    { name: "processor", label: "Processor", description: "The processor name to mock.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "processor", label: "Processor", description: "The processor name to mock (e.g. http:request, db:select).", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
                     { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            },
+            {
+                name: "With Attributes",
+                parameters: [
+                    { name: "where", label: "Where Expression", description: "DataWeave expression to match processor invocations.", dataType: "string", required: false, group: "With Attributes", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "attributeName", label: "Attribute Name", description: "Specific attribute name to match against.", dataType: "string", required: false, group: "With Attributes", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "whereValue", label: "Attribute Value", description: "Value or expression for the matched attribute.", dataType: "string", required: false, group: "With Attributes", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true }
+                ]
+            },
+            {
+                name: "Then Return",
+                parameters: [
+                    { name: "payload", label: "Return Payload", description: "Payload to return when the mocked processor is called.", dataType: "string", required: false, group: "Then Return", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "mediaType", label: "Return MIME Type", description: "MIME type for returned payload.", dataType: "string", required: false, group: "Then Return", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "encoding", label: "Return Encoding", description: "Encoding for returned payload.", dataType: "string", required: false, group: "Then Return", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "attributes", label: "Return Attributes", description: "Attributes to return when the mocked processor is called.", dataType: "string", required: false, group: "Then Return", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "errorType", label: "Throw Error Type", description: "Error type to throw (e.g. HTTP:NOT_FOUND).", dataType: "string", required: false, group: "Then Return", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
                 ]
             }
         ]
@@ -2081,9 +2134,9 @@ exports.CORE_CATALOG = {
             {
                 name: "General",
                 parameters: [
-                    { name: "expression", label: "Expression", description: "Expression to evaluate.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
-                    { name: "is", label: "Is (Matcher)", description: "Hamcrest matcher expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
-                    { name: "message", label: "Message", description: "Assertion failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "expression", label: "Expression", description: "Expression to evaluate.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED", defaultExpressionMode: true },
+                    { name: "is", label: "Is (Matcher)", description: "Hamcrest matcher expression (e.g. MunitTools::equalTo('expected')).", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED", defaultExpressionMode: true },
+                    { name: "message", label: "Failure Message", description: "Assertion failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
                     { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
                 ]
             }
@@ -2099,9 +2152,9 @@ exports.CORE_CATALOG = {
             {
                 name: "General",
                 parameters: [
-                    { name: "actual", label: "Actual", description: "Actual value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
-                    { name: "expected", label: "Expected", description: "Expected value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED" },
-                    { name: "message", label: "Message", description: "Failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
+                    { name: "actual", label: "Actual", description: "Actual value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED", defaultExpressionMode: true },
+                    { name: "expected", label: "Expected", description: "Expected value expression.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED", defaultExpressionMode: true },
+                    { name: "message", label: "Failure Message", description: "Failure message.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED" },
                     { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
                 ]
             }
@@ -2139,6 +2192,91 @@ exports.CORE_CATALOG = {
                 name: "General",
                 parameters: [
                     { name: "processor", label: "Processor", description: "The processor to spy on.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:sleep": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "sleep",
+        kind: "operation",
+        displayName: "Sleep",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "time", label: "Time", description: "Duration to pause test execution.", dataType: "number", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "timeUnit", label: "Time Unit", description: "Time unit for sleep duration.", dataType: "enum", required: false, defaultValue: "MILLISECONDS", allowedValues: ["MILLISECONDS", "SECONDS", "MINUTES"], group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:fail": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "fail",
+        kind: "operation",
+        displayName: "Fail",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "message", label: "Failure Message", description: "Failure description message to abort test.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:store": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "store",
+        kind: "operation",
+        displayName: "Store",
+        iconId: "core:munit-test",
+        subtitleAttribute: "key",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "key", label: "Key", description: "The key name to store the value under.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "value", label: "Value", description: "The DataWeave expression or value to store.", dataType: "string", required: true, group: "General", supportsExpression: true, isReference: false, expressionSupport: "REQUIRED", defaultExpressionMode: true },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:retrieve": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "retrieve",
+        kind: "operation",
+        displayName: "Retrieve",
+        iconId: "core:munit-test",
+        subtitleAttribute: "key",
+        groups: [
+            {
+                name: "General",
+                parameters: [
+                    { name: "key", label: "Key", description: "The key name of the value to retrieve.", dataType: "string", required: true, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "target", label: "Target Variable", description: "Target variable to store the retrieved value (defaults to payload).", dataType: "string", required: false, defaultValue: "payload", group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" },
+                    { name: "defaultValue", label: "Default Value", description: "Value or expression if the key does not exist.", dataType: "string", required: false, group: "General", supportsExpression: true, isReference: false, expressionSupport: "SUPPORTED", defaultExpressionMode: true },
+                    { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
+                ]
+            }
+        ]
+    },
+    "munit-tools:clear-stored-data": {
+        namespaceUri: exports.MULE_MUNIT_TOOLS_NAMESPACE,
+        localName: "clear-stored-data",
+        kind: "operation",
+        displayName: "Clear Stored Data",
+        iconId: "core:munit-test",
+        groups: [
+            {
+                name: "General",
+                parameters: [
                     { name: "doc:name", label: "Display Name", description: "Display name.", dataType: "string", required: false, group: "General", supportsExpression: false, isReference: false, expressionSupport: "NOT_SUPPORTED" }
                 ]
             }

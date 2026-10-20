@@ -1,4 +1,4 @@
-import * as assert from 'assert';
+import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -30,9 +30,7 @@ describe('Choice Router & When Expression Tests', () => {
   function parseAndBuild(xml: string) {
     const parseResult = MuleXmlParser.parse(xml);
     assert(parseResult.root, 'XML root should be parsed');
-    return SemanticModelBuilder.build(parseResult.root, (ns, localName, prefix) =>
-      ExtensionCatalog.resolveComponent(ns, localName, prefix)
-    );
+    return SemanticModelBuilder.build(parseResult.root!, xmlFilePath);
   }
 
   it('1. XML escaping correctly handles <, >, &&, quotes and prevents double escaping', () => {

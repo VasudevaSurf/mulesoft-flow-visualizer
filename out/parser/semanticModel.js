@@ -28,11 +28,25 @@ class SemanticModelBuilder {
                     flows.push(this.buildGlobalErrorHandler(child, unresolvedNamespaces));
                 }
                 else if (isMunitNs && local === 'test') {
-                    // MUnit tests are flow-like constructs with behavior/execution/validation sections
-                    flows.push(this.buildFlow(child, 'flow', unresolvedNamespaces));
+                    flows.push(this.buildMunitTestFlow(child, unresolvedNamespaces));
                 }
                 else if (isMunitNs && (local === 'before-test' || local === 'after-test' || local === 'before-suite' || local === 'after-suite')) {
-                    flows.push(this.buildFlow(child, 'sub-flow', unresolvedNamespaces));
+                    flows.push(this.buildFlow(child, local, unresolvedNamespaces));
+                }
+                else if ((local === 'job' && (pfx === 'batch' || ns.includes('batch'))) || (pfx === 'batch' && local === 'job')) {
+                    const jobName = child.attributes['jobName'] || child.attributes['name'] || child.attributes['doc:name'] || 'Batch Job';
+                    const jobNode = this.buildBatchJobNode(child, jobName, 'job', unresolvedNamespaces);
+                    flows.push({
+                        id: child.attributes['doc:id'] || child.attributes['jobName'] || child.attributes['name'] || (0, nodeId_1.generateNodeId)(child.attributes, 'Batch_Job', 'job'),
+                        name: jobName,
+                        type: 'flow',
+                        source: null,
+                        chain: [jobNode],
+                        errorHandler: [],
+                        errorHandlerRef: null,
+                        range: child.range,
+                        collapsed: false,
+                    });
                 }
                 else {
                     // Global configs, connectors, properties
@@ -272,6 +286,16 @@ class SemanticModelBuilder {
                 diagnostics: [],
             };
         }
+        const isBatchNs = (el.prefix || '').toLowerCase() === 'batch' || (el.namespaceUri || '').includes('batch');
+        if (isBatchNs && el.localName === 'job') {
+            return this.buildBatchJobNode(el, flowName, path, unresolvedNs);
+        }
+        if (isBatchNs && el.localName === 'step') {
+            return this.buildBatchStepNode(el, flowName, path, unresolvedNs);
+        }
+        if (isBatchNs && el.localName === 'aggregator') {
+            return this.buildBatchAggregatorNode(el, flowName, path, unresolvedNs);
+        }
         // 3. Router components: choice, scatter-gather, round-robin, first-successful
         if (descriptor.kind === 'router' || el.localName === 'choice' || el.localName === 'scatter-gather' || el.localName === 'round-robin' || el.localName === 'first-successful') {
             if (el.localName === 'choice') {
@@ -406,6 +430,15 @@ class SemanticModelBuilder {
         if (el.localName === 'flow-ref') {
             return el.attributes['name'] || null;
         }
+        if (el.localName === 'job') {
+            return el.attributes['jobName'] || el.attributes['name'] || null;
+        }
+        if (el.localName === 'step') {
+            return el.attributes['acceptExpression'] || el.attributes['acceptPolicy'] || null;
+        }
+        if (el.localName === 'aggregator') {
+            return el.attributes['size'] ? `size: ${el.attributes['size']}` : null;
+        }
         if (descriptor.subtitleAttribute && el.attributes[descriptor.subtitleAttribute]) {
             return el.attributes[descriptor.subtitleAttribute];
         }
@@ -419,6 +452,315 @@ class SemanticModelBuilder {
             return el.attributes['expression'];
         }
         return null;
+    }
+    static buildBatchJobNode(el, flowName, path, unresolvedNs) {
+        const descriptor = catalog_1.ExtensionCatalog.resolveComponent(el.namespaceUri, el.localName, el.prefix);
+        const id = (0, nodeId_1.generateNodeId)(el.attributes, flowName, path);
+        const label = el.attributes['doc:name'] || el.attributes['jobName'] || el.attributes['name'] || descriptor.displayName;
+        const subtitle = el.attributes['jobName'] || el.attributes['name'] || null;
+        const children = el.children || [];
+        let inputEl = null;
+        let procRecsEl = null;
+        let onCompEl = null;
+        const directSteps = [];
+        for (const child of children) {
+            const local = child.localName;
+            if (local === 'input') {
+                inputEl = child;
+            }
+            else if (local === 'process-records') {
+                procRecsEl = child;
+            }
+            else if (local === 'on-complete') {
+                onCompEl = child;
+            }
+            else if (local === 'step') {
+                directSteps.push(child);
+            }
+        }
+        // 1. Input zone
+        const inputDescriptor = catalog_1.ExtensionCatalog.resolveComponent(inputEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/batch', 'input', 'batch');
+        const inputChain = [];
+        if (inputEl && inputEl.children) {
+            for (let i = 0; i < inputEl.children.length; i++) {
+                inputChain.push(this.buildNode(inputEl.children[i], flowName, `${path}/input/chain[${i}]`, unresolvedNs));
+            }
+        }
+        const inputNode = {
+            id: `${id}:input`,
+            descriptor: inputDescriptor,
+            label: inputEl?.attributes['doc:name'] || 'Input',
+            subtitle: null,
+            attributes: inputEl?.attributes || {},
+            range: inputEl?.range || el.range,
+            chain: inputChain,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        // 2. Process Records zone
+        const procDescriptor = catalog_1.ExtensionCatalog.resolveComponent(procRecsEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/batch', 'process-records', 'batch');
+        const stepElements = [];
+        if (procRecsEl && procRecsEl.children) {
+            for (const c of procRecsEl.children) {
+                if (c.localName === 'step') {
+                    stepElements.push(c);
+                }
+            }
+        }
+        if (directSteps.length > 0) {
+            stepElements.push(...directSteps);
+        }
+        const stepNodes = [];
+        for (let i = 0; i < stepElements.length; i++) {
+            stepNodes.push(this.buildBatchStepNode(stepElements[i], flowName, `${path}/step[${i}]`, unresolvedNs));
+        }
+        const procRecordsNode = {
+            id: `${id}:process-records`,
+            descriptor: procDescriptor,
+            label: procRecsEl?.attributes['doc:name'] || 'Process Records',
+            subtitle: `${stepNodes.length} step${stepNodes.length === 1 ? '' : 's'}`,
+            attributes: procRecsEl?.attributes || {},
+            range: procRecsEl?.range || el.range,
+            chain: stepNodes,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        // 3. On Complete zone
+        const onCompDescriptor = catalog_1.ExtensionCatalog.resolveComponent(onCompEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/batch', 'on-complete', 'batch');
+        const onCompChain = [];
+        if (onCompEl && onCompEl.children) {
+            for (let i = 0; i < onCompEl.children.length; i++) {
+                onCompChain.push(this.buildNode(onCompEl.children[i], flowName, `${path}/on-complete/chain[${i}]`, unresolvedNs));
+            }
+        }
+        const onCompleteNode = {
+            id: `${id}:on-complete`,
+            descriptor: onCompDescriptor,
+            label: onCompEl?.attributes['doc:name'] || 'On Complete',
+            subtitle: null,
+            attributes: onCompEl?.attributes || {},
+            range: onCompEl?.range || el.range,
+            chain: onCompChain,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        return {
+            id,
+            descriptor,
+            label,
+            subtitle,
+            attributes: el.attributes,
+            range: el.range,
+            chain: [inputNode, procRecordsNode, onCompleteNode],
+            routes: [],
+            batchZones: {
+                input: inputNode,
+                processRecords: procRecordsNode,
+                onComplete: onCompleteNode,
+            },
+            body: [],
+            text: el.text,
+            collapsed: false,
+            diagnostics: [],
+        };
+    }
+    static buildBatchStepNode(el, flowName, path, unresolvedNs) {
+        const descriptor = catalog_1.ExtensionCatalog.resolveComponent(el.namespaceUri, el.localName, el.prefix);
+        const id = (0, nodeId_1.generateNodeId)(el.attributes, flowName, path);
+        const label = el.attributes['doc:name'] || el.attributes['name'] || descriptor.displayName;
+        const subtitle = el.attributes['acceptExpression'] || el.attributes['acceptPolicy'] || null;
+        const children = el.children || [];
+        let aggregatorEl = null;
+        const processorEls = [];
+        for (const child of children) {
+            if (child.localName === 'aggregator') {
+                aggregatorEl = child;
+            }
+            else {
+                processorEls.push(child);
+            }
+        }
+        const stepChain = [];
+        for (let i = 0; i < processorEls.length; i++) {
+            stepChain.push(this.buildNode(processorEls[i], flowName, `${path}/chain[${i}]`, unresolvedNs));
+        }
+        const aggregatorNode = aggregatorEl
+            ? this.buildBatchAggregatorNode(aggregatorEl, flowName, `${path}/aggregator`, unresolvedNs)
+            : null;
+        return {
+            id,
+            descriptor,
+            label,
+            subtitle,
+            attributes: el.attributes,
+            range: el.range,
+            chain: stepChain,
+            routes: [],
+            aggregator: aggregatorNode,
+            body: [],
+            text: el.text,
+            collapsed: false,
+            diagnostics: [],
+        };
+    }
+    static buildBatchAggregatorNode(el, flowName, path, unresolvedNs) {
+        const descriptor = catalog_1.ExtensionCatalog.resolveComponent(el.namespaceUri, el.localName, el.prefix);
+        const id = (0, nodeId_1.generateNodeId)(el.attributes, flowName, path);
+        const label = el.attributes['doc:name'] || descriptor.displayName;
+        const subtitle = el.attributes['size'] ? `size: ${el.attributes['size']}` : null;
+        const children = el.children || [];
+        const aggChain = [];
+        for (let i = 0; i < children.length; i++) {
+            aggChain.push(this.buildNode(children[i], flowName, `${path}/chain[${i}]`, unresolvedNs));
+        }
+        return {
+            id,
+            descriptor,
+            label,
+            subtitle,
+            attributes: el.attributes,
+            range: el.range,
+            chain: aggChain,
+            routes: [],
+            body: [],
+            text: el.text,
+            collapsed: false,
+            diagnostics: [],
+        };
+    }
+    static buildMunitTestFlow(flowEl, unresolvedNs) {
+        const testName = flowEl.attributes['name'] || flowEl.attributes['description'] || 'MUnit Test';
+        const testId = flowEl.attributes['doc:id'] || testName;
+        let behaviorEl = null;
+        let executionEl = null;
+        let validationEl = null;
+        let ehEl = null;
+        let errorHandlerRef = flowEl.attributes['errorHandler-ref'] || flowEl.attributes['error-handler-ref'] || null;
+        const children = flowEl.children || [];
+        for (const child of children) {
+            const local = child.localName;
+            if (local === 'behavior') {
+                behaviorEl = child;
+            }
+            else if (local === 'execution') {
+                executionEl = child;
+            }
+            else if (local === 'validation') {
+                validationEl = child;
+            }
+            else if (local === 'error-handler') {
+                ehEl = child;
+            }
+        }
+        // 1. Behavior zone
+        const behaviorDescriptor = catalog_1.ExtensionCatalog.resolveComponent(behaviorEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/munit', 'behavior', 'munit');
+        const behaviorChain = [];
+        if (behaviorEl && behaviorEl.children) {
+            for (let i = 0; i < behaviorEl.children.length; i++) {
+                behaviorChain.push(this.buildNode(behaviorEl.children[i], testName, `behavior/chain[${i}]`, unresolvedNs));
+            }
+        }
+        const behaviorNode = {
+            id: `${testId}:behavior`,
+            descriptor: behaviorDescriptor,
+            label: behaviorEl?.attributes['doc:name'] || 'Behavior',
+            subtitle: `${behaviorChain.length} processor${behaviorChain.length === 1 ? '' : 's'}`,
+            attributes: behaviorEl?.attributes || {},
+            range: behaviorEl?.range || flowEl.range,
+            chain: behaviorChain,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        // 2. Execution zone
+        const executionDescriptor = catalog_1.ExtensionCatalog.resolveComponent(executionEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/munit', 'execution', 'munit');
+        const executionChain = [];
+        if (executionEl && executionEl.children) {
+            for (let i = 0; i < executionEl.children.length; i++) {
+                executionChain.push(this.buildNode(executionEl.children[i], testName, `execution/chain[${i}]`, unresolvedNs));
+            }
+        }
+        else if (!behaviorEl && !executionEl && !validationEl) {
+            for (let i = 0; i < children.length; i++) {
+                const c = children[i];
+                if (c.localName !== 'error-handler' && c.localName !== 'enable-flow-sources') {
+                    executionChain.push(this.buildNode(c, testName, `execution/chain[${executionChain.length}]`, unresolvedNs));
+                }
+            }
+        }
+        const executionNode = {
+            id: `${testId}:execution`,
+            descriptor: executionDescriptor,
+            label: executionEl?.attributes['doc:name'] || 'Execution',
+            subtitle: `${executionChain.length} processor${executionChain.length === 1 ? '' : 's'}`,
+            attributes: executionEl?.attributes || {},
+            range: executionEl?.range || flowEl.range,
+            chain: executionChain,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        // 3. Validation zone
+        const validationDescriptor = catalog_1.ExtensionCatalog.resolveComponent(validationEl?.namespaceUri || 'http://www.mulesoft.org/schema/mule/munit', 'validation', 'munit');
+        const validationChain = [];
+        if (validationEl && validationEl.children) {
+            for (let i = 0; i < validationEl.children.length; i++) {
+                validationChain.push(this.buildNode(validationEl.children[i], testName, `validation/chain[${i}]`, unresolvedNs));
+            }
+        }
+        const validationNode = {
+            id: `${testId}:validation`,
+            descriptor: validationDescriptor,
+            label: validationEl?.attributes['doc:name'] || 'Validation',
+            subtitle: `${validationChain.length} processor${validationChain.length === 1 ? '' : 's'}`,
+            attributes: validationEl?.attributes || {},
+            range: validationEl?.range || flowEl.range,
+            chain: validationChain,
+            routes: [],
+            body: [],
+            collapsed: false,
+            diagnostics: [],
+        };
+        // Error handling in test
+        const errorHandler = [];
+        if (ehEl) {
+            if (ehEl.attributes['ref']) {
+                errorHandlerRef = ehEl.attributes['ref'];
+            }
+            else {
+                for (let rIdx = 0; rIdx < ehEl.children.length; rIdx++) {
+                    const ehChild = ehEl.children[rIdx];
+                    const route = this.buildErrorRoute(ehChild, testName, `err[${rIdx}]`, unresolvedNs);
+                    if (route) {
+                        errorHandler.push(route);
+                    }
+                }
+            }
+        }
+        return {
+            id: testId,
+            name: testName,
+            type: 'munit-test',
+            source: null,
+            chain: [behaviorNode, executionNode, validationNode],
+            errorHandler,
+            errorHandlerRef,
+            range: flowEl.range,
+            collapsed: false,
+            munitZones: {
+                behavior: behaviorNode,
+                execution: executionNode,
+                validation: validationNode,
+            },
+        };
     }
 }
 exports.SemanticModelBuilder = SemanticModelBuilder;

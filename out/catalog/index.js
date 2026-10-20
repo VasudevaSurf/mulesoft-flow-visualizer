@@ -74,6 +74,7 @@ class ExtensionCatalog {
         // 1. Check core catalog
         const coreMatch = coreCatalog_1.CORE_CATALOG[key] ||
             (prefix ? coreCatalog_1.CORE_CATALOG[`${prefix}:${localName}`] : undefined) ||
+            (ns.includes('batch') ? coreCatalog_1.CORE_CATALOG[`batch:${localName}`] : undefined) ||
             coreCatalog_1.CORE_CATALOG[localName];
         if (coreMatch) {
             return coreMatch;
@@ -144,6 +145,7 @@ class ExtensionCatalog {
         const key = `${namespaceUri || ''}:${localName}`;
         const coreMatch = coreCatalog_1.CORE_CATALOG[key] ||
             (prefix ? coreCatalog_1.CORE_CATALOG[`${prefix}:${localName}`] : null) ||
+            (ns.includes('batch') ? coreCatalog_1.CORE_CATALOG[`batch:${localName}`] : null) ||
             coreCatalog_1.CORE_CATALOG[localName];
         if (coreMatch && coreMatch.groups && coreMatch.groups.length > 0) {
             return {

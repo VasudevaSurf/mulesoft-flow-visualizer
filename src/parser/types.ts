@@ -68,6 +68,18 @@ export interface ModelDiagnostic {
 
 // ---------- Semantic layer (what gets laid out) ----------
 
+export interface BatchJobZones {
+  input: Node;
+  processRecords: Node;
+  onComplete: Node;
+}
+
+export interface MunitTestZones {
+  behavior: Node;
+  execution: Node;
+  validation: Node;
+}
+
 export interface Node {
   id: string;                   // stable: doc:id if present, else structural path hash
   descriptor: ComponentDescriptor;
@@ -87,6 +99,10 @@ export interface Node {
   text?: string | null;
   collapsed: boolean;
   errorBandCollapsed?: boolean;
+  /** Batch job three zones if this node is a batch:job. */
+  batchZones?: BatchJobZones;
+  /** Aggregator component if this node is a batch:step. */
+  aggregator?: Node | null;
   diagnostics: ModelDiagnostic[];
 }
 
@@ -104,10 +120,20 @@ export interface Route {
   range: SourceRange;
 }
 
+export type FlowType =
+  | 'flow'
+  | 'sub-flow'
+  | 'global-error-handler'
+  | 'munit-test'
+  | 'before-test'
+  | 'after-test'
+  | 'before-suite'
+  | 'after-suite';
+
 export interface FlowModel {
   id: string;
   name: string;                 // the name= attribute
-  type: 'flow' | 'sub-flow' | 'global-error-handler';
+  type: FlowType;
   source: Node | null;          // null for sub-flow, and for flows with no source
   chain: Node[];
   errorHandler: Route[];        // empty if none
@@ -115,6 +141,7 @@ export interface FlowModel {
   range: SourceRange;
   collapsed: boolean;
   errorBandCollapsed?: boolean;
+  munitZones?: MunitTestZones;
 }
 
 export interface SemanticModel {
