@@ -11,49 +11,49 @@ export type HostToWebviewMessage =
   | { type: 'setTheme'; theme: 'vscode' | 'studio' }
   | { type: 'showWarning'; message: string }
   | {
-      type: 'updatePropertiesPanel';
-      nodeId: string;
-      displayName: string;
-      iconId?: string;
-      groups: ParameterGroupModel[];
-      currentValues: Record<string, any>;
-      isConfiguration?: boolean;
-      testConnectionAvailable?: boolean;
-      namespaceUri?: string;
-      localName?: string;
-      isTransform?: boolean;
-      transformData?: {
-        script: string;
-        payloadResource?: string;
-        hasPayload?: boolean;
-        attributesScript?: string;
-        attributesResource?: string;
-        targetVariables: Array<{ name: string; script: string; resource?: string }>;
-        outputType?: string;
-      };
-      isRouter?: boolean;
-      routerRoutes?: Array<{
-        id: string;
-        routeId?: string;
-        kind: string;
-        name?: string;
-        expression?: string;
-        label: string;
-      }>;
-      autocompleteContext?: {
-        variables: Array<{ name: string; type?: string }>;
-        precedingPayloadShape?: {
-          outputType?: string;
-          fields: Array<{ name: string; children?: string[] }>;
-        };
-      };
-    }
-  | {
-      type: 'testConnectionResult';
-      success: boolean;
-      message: string;
-      durationMs?: number;
+    type: 'updatePropertiesPanel';
+    nodeId: string;
+    displayName: string;
+    iconId?: string;
+    groups: ParameterGroupModel[];
+    currentValues: Record<string, any>;
+    isConfiguration?: boolean;
+    testConnectionAvailable?: boolean;
+    namespaceUri?: string;
+    localName?: string;
+    isTransform?: boolean;
+    transformData?: {
+      script: string;
+      payloadResource?: string;
+      hasPayload?: boolean;
+      attributesScript?: string;
+      attributesResource?: string;
+      targetVariables: Array<{ name: string; script: string; resource?: string }>;
+      outputType?: string;
     };
+    isRouter?: boolean;
+    routerRoutes?: Array<{
+      id: string;
+      routeId?: string;
+      kind: string;
+      name?: string;
+      expression?: string;
+      label: string;
+    }>;
+    autocompleteContext?: {
+      variables: Array<{ name: string; type?: string }>;
+      precedingPayloadShape?: {
+        outputType?: string;
+        fields: Array<{ name: string; children?: string[] }>;
+      };
+    };
+  }
+  | {
+    type: 'testConnectionResult';
+    success: boolean;
+    message: string;
+    durationMs?: number;
+  };
 
 /**
  * Webview to Host messages
@@ -62,69 +62,69 @@ export type WebviewToHostMessage =
   | { type: 'ready' }
   | { type: 'revealXml'; range: SourceRange; focusEditor?: boolean }
   | {
-      type: 'showProperties';
-      nodeId: string;
-      namespaceUri: string;
-      localName: string;
-      attributes: Record<string, string>;
-      isConfiguration?: boolean;
-    }
+    type: 'showProperties';
+    nodeId: string;
+    namespaceUri: string;
+    localName: string;
+    attributes: Record<string, string>;
+    isConfiguration?: boolean;
+  }
   | { type: 'navigateFlowRef'; flowName: string }
   | { type: 'toggleCollapse'; nodeId: string }
-  | { type: 'exportScene'; format: 'svg' | 'png' }
+  | { type: 'exportScene'; format: 'svg' | 'png'; data?: string; error?: string }
   | {
-      type: 'createConfiguration';
-      targetNodeId: string;
-      configRefParamName: string;
-      configXmlTag: string;
-      configName: string;
-      attributes: Record<string, string>;
-    }
+    type: 'createConfiguration';
+    targetNodeId: string;
+    configRefParamName: string;
+    configXmlTag: string;
+    configName: string;
+    attributes: Record<string, string>;
+  }
   | {
-      type: 'updateConfigRef';
-      targetNodeId: string;
-      configRefParamName: string;
-      configName: string;
-    }
+    type: 'updateConfigRef';
+    targetNodeId: string;
+    configRefParamName: string;
+    configName: string;
+  }
   | {
-      type: 'testConnection';
-      nodeId: string;
-      namespaceUri: string;
-      localName: string;
-      attributes: Record<string, any>;
-    }
+    type: 'testConnection';
+    nodeId: string;
+    namespaceUri: string;
+    localName: string;
+    attributes: Record<string, any>;
+  }
   | {
-      type: 'updateParameterValue';
-      nodeId: string;
-      paramName: string;
-      value: any;
-      dataType?: string;
-    }
+    type: 'updateParameterValue';
+    nodeId: string;
+    paramName: string;
+    value: any;
+    dataType?: string;
+  }
   | {
-      type: 'addChoiceRoute';
-      nodeId: string;
-      routerNodeId?: string;
-      expression?: string;
-    }
+    type: 'addChoiceRoute';
+    nodeId: string;
+    routerNodeId?: string;
+    expression?: string;
+  }
   | {
-      type: 'deleteRoute';
-      routeId: string;
-      routerNodeId?: string;
-    }
+    type: 'deleteRoute';
+    routeId: string;
+    routerNodeId?: string;
+  }
   | {
-      type: 'reorderChoiceRoutes';
-      nodeId: string;
-      fromIndex: number;
-      toIndex: number;
-      routerNodeId?: string;
-      routeIndex?: number;
-      direction?: 'up' | 'down';
-    }
+    type: 'reorderChoiceRoutes';
+    nodeId: string;
+    fromIndex: number;
+    toIndex: number;
+    routerNodeId?: string;
+    routeIndex?: number;
+    direction?: 'up' | 'down';
+  }
   | {
-      type: 'webviewError';
-      message: string;
-      stack?: string;
-      source?: string;
-      lineno?: number;
-      colno?: number;
-    };
+    type: 'webviewError';
+    message: string;
+    stack?: string;
+    source?: string;
+    lineno?: number;
+    colno?: number;
+  };

@@ -1839,11 +1839,226 @@ class WebviewHtmlBuilder {
     });
 
     // ── Export Handling ─────────────────────────────────
-    document.getElementById('btn-export-svg').onclick = () => {
-      vscode.postMessage({ type: 'exportScene', format: 'svg' });
+    function buildExportSvg() {
+      if (!currentScene) {
+        throw new Error('No diagram scene available to export.');
+      }
+      var origSvg = document.getElementById('canvas-svg');
+      if (!origSvg) {
+        throw new Error('Canvas SVG element not found.');
+      }
+      var cloneSvg = origSvg.cloneNode(true);
+
+      var origElements = [origSvg].concat(Array.prototype.slice.call(origSvg.querySelectorAll('*')));
+      var cloneElements = [cloneSvg].concat(Array.prototype.slice.call(cloneSvg.querySelectorAll('*')));
+
+      var styleProps = [
+        'fill',
+        'fill-opacity',
+        'stroke',
+        'stroke-width',
+        'stroke-opacity',
+        'stroke-dasharray',
+        'stroke-linecap',
+        'stroke-linejoin',
+        'opacity',
+        'color',
+        'font-family',
+        'font-size',
+        'font-weight',
+        'font-style',
+        'text-anchor',
+        'dominant-baseline',
+        'letter-spacing',
+        'display',
+        'visibility'
+      ];
+
+      var count = Math.min(origElements.length, cloneElements.length);
+      for (var i = 0; i < count; i++) {
+        var origEl = origElements[i];
+        var cloneEl = cloneElements[i];
+        if (!origEl || !cloneEl || origEl.nodeType !== 1) continue;
+
+        var computed = window.getComputedStyle(origEl);
+        if (computed) {
+          for (var p = 0; p < styleProps.length; p++) {
+            var prop = styleProps[p];
+            var val = computed.getPropertyValue(prop);
+            if (val) {
+              if (prop === 'display' && val === 'none' && origEl.closest && origEl.closest('defs') && origEl.tagName.toLowerCase() !== 'defs') {
+                continue;
+              }
+              cloneEl.style.setProperty(prop, val);
+              if (prop === 'fill' && cloneEl.hasAttribute('fill')) {
+                cloneEl.setAttribute('fill', val);
+              }
+              if (prop === 'stroke' && cloneEl.hasAttribute('stroke')) {
+                cloneEl.setAttribute('stroke', val);
+              }
+            }
+          }
+
+          var tagName = origEl.tagName ? origEl.tagName.toLowerCase() : '';
+          if (tagName === 'rect') {
+            var rx = computed.getPropertyValue('rx');
+            if (rx && rx !== 'auto') {
+              cloneEl.style.setProperty('rx', rx);
+              if (!cloneEl.hasAttribute('rx')) {
+                cloneEl.setAttribute('rx', rx.replace('px', ''));
+              }
+            }
+            var ry = computed.getPropertyValue('ry');
+            if (ry && ry !== 'auto') {
+              cloneEl.style.setProperty('ry', ry);
+              if (!cloneEl.hasAttribute('ry')) {
+                cloneEl.setAttribute('ry', ry.replace('px', ''));
+              }
+            }
+          } else if (tagName === 'use') {
+            var xlinkHref = cloneEl.getAttribute('xlink:href');
+            if (xlinkHref && !cloneEl.getAttribute('href')) {
+              cloneEl.setAttribute('href', xlinkHref);
+            }
+          }
+        }
+      }
+
+      var pad = 40;
+      var totalW = (currentScene && currentScene.totalWidth) ? currentScene.totalWidth : 800;
+      var totalH = (currentScene && currentScene.totalHeight) ? currentScene.totalHeight : 600;
+      var exportWidth = totalW + pad * 2;
+      var exportHeight = totalH + pad * 2;
+
+      var cloneSceneRoot = cloneSvg.querySelector('#scene-root');
+      if (cloneSceneRoot) {
+        cloneSceneRoot.setAttribute('transform', 'translate(' + pad + ', ' + pad + ')');
+        cloneSceneRoot.style.transform = '';
+      }
+
+      cloneSvg.removeAttribute('style');
+      cloneSvg.removeAttribute('class');
+      cloneSvg.setAttribute('width', String(exportWidth));
+      cloneSvg.setAttribute('height', String(exportHeight));
+      cloneSvg.setAttribute('viewBox', '0 0 ' + exportWidth + ' ' + exportHeight);
+      if (!cloneSvg.getAttribute('xmlns')) {
+        cloneSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      }
+      if (!cloneSvg.getAttribute('xmlns:xlink')) {
+        cloneSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+      }
+
+      var vp = document.getElementById('viewport');
+      var bgColor = '#1e1e1e';
+      if (vp) {
+        var vpBg = window.getComputedStyle(vp).backgroundColor;
+        if (vpBg && vpBg !== 'transparent' && vpBg !== 'rgba(0, 0, 0, 0)') {
+          bgColor = vpBg;
+        } else if (document.body) {
+          var bodyBg = window.getComputedStyle(document.body).backgroundColor;
+          if (bodyBg && bodyBg !== 'transparent' && bodyBg !== 'rgba(0, 0, 0, 0)') {
+            bgColor = bodyBg;
+          }
+        }
+      }
+
+      var bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('x', '0');
+      bgRect.setAttribute('y', '0');
+      bgRect.setAttribute('width', '100%');
+      bgRect.setAttribute('height', '100%');
+      bgRect.setAttribute('fill', bgColor);
+
+      if (cloneSceneRoot) {
+        cloneSvg.insertBefore(bgRect, cloneSceneRoot);
+      } else {
+        cloneSvg.appendChild(bgRect);
+      }
+
+      var serializer = new XMLSerializer();
+      return serializer.serializeToString(cloneSvg);
+    }
+
+    document.getElementById('btn-export-svg').onclick = function() {
+      try {
+        var svgData = buildExportSvg();
+        vscode.postMessage({ type: 'exportScene', format: 'svg', data: svgData });
+      } catch (err) {
+        var errMsg = (err && err.message) || String(err);
+        vscode.postMessage({ type: 'exportScene', format: 'svg', error: errMsg });
+      }
     };
-    document.getElementById('btn-export-png').onclick = () => {
-      vscode.postMessage({ type: 'exportScene', format: 'png' });
+
+    document.getElementById('btn-export-png').onclick = function() {
+      try {
+        var svgData = buildExportSvg();
+        var pad = 40;
+        var totalW = (currentScene && currentScene.totalWidth) ? currentScene.totalWidth : 800;
+        var totalH = (currentScene && currentScene.totalHeight) ? currentScene.totalHeight : 600;
+        var exportWidth = totalW + pad * 2;
+        var exportHeight = totalH + pad * 2;
+
+        var scaleFactor = 2;
+        if (exportWidth * scaleFactor > 16000 || exportHeight * scaleFactor > 16000) {
+          scaleFactor = Math.min(16000 / exportWidth, 16000 / exportHeight);
+          if (scaleFactor > 2) {
+            scaleFactor = 2;
+          }
+        }
+        var canvasWidth = Math.max(1, Math.floor(exportWidth * scaleFactor));
+        var canvasHeight = Math.max(1, Math.floor(exportHeight * scaleFactor));
+
+        var img = new Image();
+        img.onload = function() {
+          try {
+            var canvas = document.createElement('canvas');
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            var ctx = canvas.getContext('2d');
+            if (!ctx) {
+              vscode.postMessage({
+                type: 'exportScene',
+                format: 'png',
+                error: 'Could not create canvas 2D context.'
+              });
+              return;
+            }
+            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+            var dataUrl = canvas.toDataURL('image/png');
+            if (!dataUrl || dataUrl === 'data:,' || dataUrl.length < 50 || dataUrl.indexOf('data:image/png;base64,') !== 0) {
+              vscode.postMessage({
+                type: 'exportScene',
+                format: 'png',
+                error: 'Diagram is too large to export as PNG. Please export as SVG instead.'
+              });
+              return;
+            }
+            var base64Data = dataUrl.substring('data:image/png;base64,'.length);
+            vscode.postMessage({
+              type: 'exportScene',
+              format: 'png',
+              data: base64Data
+            });
+          } catch (canvasErr) {
+            vscode.postMessage({
+              type: 'exportScene',
+              format: 'png',
+              error: 'Failed to generate PNG (diagram may be too large): ' + ((canvasErr && canvasErr.message) || String(canvasErr)) + '. Please try SVG export.'
+            });
+          }
+        };
+        img.onerror = function(imgErr) {
+          vscode.postMessage({
+            type: 'exportScene',
+            format: 'png',
+            error: 'Failed to render diagram image for PNG export.'
+          });
+        };
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+      } catch (err) {
+        var errMsg = (err && err.message) || String(err);
+        vscode.postMessage({ type: 'exportScene', format: 'png', error: errMsg });
+      }
     };
 
     // ── Message Protocol ─────────────────────────────────

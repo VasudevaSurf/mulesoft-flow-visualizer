@@ -98,6 +98,8 @@ export type WebviewToHostMessage = {
 } | {
     type: 'exportScene';
     format: 'svg' | 'png';
+    data?: string;
+    error?: string;
 } | {
     type: 'createConfiguration';
     targetNodeId: string;

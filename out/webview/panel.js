@@ -271,7 +271,7 @@ class FlowVisualizerPanel {
                 this.handleFlowRefNavigation(msg.flowName);
                 break;
             case 'exportScene':
-                await this.handleExport(msg.format);
+                await this.handleExport(msg.format, msg.data, msg.error);
                 break;
             case 'showProperties':
                 await this.handleShowProperties(msg);
@@ -2314,23 +2314,32 @@ class FlowVisualizerPanel {
         }
         vscode.window.showInformationMessage(`Flow "${flowName}" not found in workspace.`);
     }
-    async handleExport(format) {
-        if (!this.lastScene)
+    async handleExport(format, data, error) {
+        if (error || !data) {
+            vscode.window.showErrorMessage(error || 'Export failed: No diagram data received.');
             return;
+        }
+        let defaultUri;
+        if (this.currentDocUri) {
+            const dir = path.dirname(this.currentDocUri.fsPath);
+            const xmlFileName = path.basename(this.currentDocUri.fsPath);
+            defaultUri = vscode.Uri.file(path.join(dir, `${xmlFileName}.${format}`));
+        }
         const saveUri = await vscode.window.showSaveDialog({
+            defaultUri,
             filters: format === 'svg' ? { SVG: ['svg'] } : { PNG: ['png'] },
             saveLabel: `Export as ${format.toUpperCase()}`,
         });
         if (!saveUri)
             return;
-        // We can export SVG directly
-        const svgHeader = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${this.lastScene.totalWidth}" height="${this.lastScene.totalHeight}" viewBox="0 0 ${this.lastScene.totalWidth} ${this.lastScene.totalHeight}">`;
-        const symbols = iconStore_1.IconStore.getAllSymbols();
-        const arrowMarker = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#90a4ae"/></marker>`;
-        const defs = `<defs>${arrowMarker}\n${symbols}</defs>`;
-        const fullSvg = `${svgHeader}\n${defs}\n<rect width="100%" height="100%" fill="#1e1e1e"/>\n<!-- Scene -->\n</svg>`;
-        fs.writeFileSync(saveUri.fsPath, fullSvg, 'utf-8');
-        vscode.window.showInformationMessage(`Exported flow diagram to ${path.basename(saveUri.fsPath)}`);
+        try {
+            const bytes = format === 'png' ? Buffer.from(data, 'base64') : Buffer.from(data, 'utf-8');
+            await vscode.workspace.fs.writeFile(saveUri, bytes);
+            vscode.window.showInformationMessage(`Exported flow diagram to ${path.basename(saveUri.fsPath)}`);
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Failed to export diagram: ${err?.message || err}`);
+        }
     }
     postMessage(message) {
         this.panel.webview.postMessage(message);
